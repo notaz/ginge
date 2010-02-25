@@ -11,9 +11,10 @@
 #include <asm/ucontext.h>
 
 #include "header.h"
+#include "sys_cacheflush.h"
 
-#define iolog printf
-//#define iolog(...)
+//#define iolog printf
+#define iolog(...)
 
 typedef unsigned int   u32;
 typedef unsigned short u16;
@@ -52,6 +53,7 @@ static u32 xread16(u32 a)
   volatile u16 *mem;
   u32 mask;
 
+ //if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a & 0xffff; }
   iolog("r16 %08x\n", a);
   mem = translate_addr(a, &mask);
   return mem[(a & mask) / 2];
@@ -62,6 +64,7 @@ static u32 xread32(u32 a)
   volatile u32 *mem;
   u32 mask;
 
+ //if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a; }
   iolog("r32 %08x\n", a);
   mem = translate_addr(a, &mask);
   return mem[(a & mask) / 4];
@@ -99,7 +102,7 @@ static void xwrite32(u32 a, u32 d)
 
 #define BIT_SET(v, b) (v & (1 << (b)))
 
-static void handle_op(u32 addr_pc, u32 op, u32 *regs, u32 addr_check)
+static void handle_op(u32 pc, u32 op, u32 *regs, u32 addr_check)
 {
   u32 t, shift, ret, addr;
   int rn, rd;
@@ -108,7 +111,9 @@ static void handle_op(u32 addr_pc, u32 op, u32 *regs, u32 addr_check)
   rn = (op & 0x000f0000) >> 16;
 
   if ((op & 0x0f200090) == 0x01000090) { // AM3: LDRH, STRH
-    if (BIT_SET(op, 6)) // S
+    if (!BIT_SET(op, 5)) // !H
+      goto unhandled;
+    if (BIT_SET(op, 6) && !BIT_SET(op, 20)) // S && !L
       goto unhandled;
 
     if (BIT_SET(op, 22))                // imm offset
@@ -122,6 +127,10 @@ static void handle_op(u32 addr_pc, u32 op, u32 *regs, u32 addr_check)
 
     if (BIT_SET(op, 20)) { // Load
       ret = xread16(addr);
+      if (BIT_SET(op, 6)) { // S
+        ret <<= 16;
+        ret = (signed int)ret >> 16;
+      }
       regs[rd] = ret;
     }
     else
@@ -165,60 +174,142 @@ static void handle_op(u32 addr_pc, u32 op, u32 *regs, u32 addr_check)
   else
     goto unhandled;
 
+#if 0
   if (addr != addr_check) {
     fprintf(stderr, "bad calculated addr: %08x vs %08x\n", addr, addr_check);
     abort();
   }
+#endif
   return;
 
 unhandled:
-  fprintf(stderr, "unhandled IO op %08x @ %08x\n", op, addr_pc);
+  fprintf(stderr, "unhandled IO op %08x @ %08x\n", op, pc);
+}
+
+#define LINKPAGE_SIZE 0x1000
+#define LINKPAGE_COUNT 4
+#define LINKPAGE_ALLOC (LINKPAGE_SIZE * LINKPAGE_COUNT)
+
+struct linkpage {
+  u32 saved_regs[15];
+  u32 *lp_r1;
+  void (*handler)(u32 addr_pc, u32 op, u32 *regs, u32 addr_check);
+  u32 code[0];
+};
+
+static struct linkpage *g_linkpage;
+static u32 *g_code_ptr;
+static int g_linkpage_count;
+
+static void init_linkpage(void)
+{
+  g_linkpage->lp_r1 = &g_linkpage->saved_regs[1];
+  g_linkpage->handler = handle_op;
+  g_code_ptr = g_linkpage->code;
+}
+
+static u32 make_offset12(u32 *pc, u32 *target)
+{
+  int lp_offs, u = 1;
+
+  lp_offs = (char *)target - (char *)pc - 2*4;
+  if (lp_offs < 0) {
+    lp_offs = -lp_offs;
+    u = 0;
+  }
+  if (lp_offs >= LINKPAGE_SIZE) {
+    fprintf(stderr, "linkpage too far: %d\n", lp_offs);
+    abort();
+  }
+
+  return (u << 23) | lp_offs;
+}
+
+static u32 make_jmp(u32 *pc, u32 *target)
+{
+  int jmp_val;
+
+  jmp_val = target - pc - 2;
+  if (jmp_val < (int)0xff000000 || jmp_val > 0x00ffffff) {
+    fprintf(stderr, "jump out of range (%p -> %p)\n", pc, target);
+    abort();
+  }
+
+  return 0xea000000 | (jmp_val & 0x00ffffff);
+}
+
+static void emit_op(u32 op)
+{
+  *g_code_ptr++ = op;
+}
+
+static void emit_op_io(u32 op, u32 *target)
+{
+  op |= make_offset12(g_code_ptr, target);
+  emit_op(op);
 }
 
 static void segv_sigaction(int num, siginfo_t *info, void *ctx)
 {
   struct ucontext *context = ctx;
   u32 *regs = (u32 *)&context->uc_mcontext.arm_r0;
-  u32 op = *(u32 *)regs[15];
+  u32 *pc = (u32 *)regs[15];
+  u32 old_op = *pc;
+  u32 *pc_ptr, *old_op_ptr;
+  int lp_size;
 
-  //printf("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
-/*
-  static int thissec, sfps;
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  sfps++;
-  if (tv.tv_sec != thissec) {
-    printf("%d\n", sfps);
-    sfps = 0;
-    thissec = tv.tv_sec;
+  if (((regs[15] ^ (u32)&segv_sigaction) & 0xff000000) == 0 ||       // PC is in our segment or
+      (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0)) // .. in linkpage
+  {
+    // real crash - time to die
+    printf("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
+    signal(num, SIG_DFL);
+    raise(num);
   }
-*/
+  printf("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
 
-  handle_op(regs[15], op, regs, (u32)info->si_addr);
-  regs[15] += 4;
-  return;
+  // spit PC and op
+  pc_ptr = g_code_ptr++;
+  old_op_ptr = g_code_ptr++;
+  *pc_ptr = (u32)pc;
+  *old_op_ptr = old_op;
 
-  //signal(num, SIG_DFL);
-  //raise(num);
+  // emit jump to code ptr
+  *pc = make_jmp(pc, g_code_ptr);
+
+  // generate code:
+  // TODO: our own stack
+  emit_op_io(0xe50f0000, &g_linkpage->saved_regs[0]);  // str r0, [saved_regs[0]] @ save r0
+  emit_op_io(0xe51f0000, (u32 *)&g_linkpage->lp_r1);   // ldr r0, =lp_r1
+  emit_op   (0xe8807ffe);                              // stmia r0, {r1-r14}
+  emit_op   (0xe2402004);                              // sub r2, r0, #4
+  emit_op_io(0xe51f0000, pc_ptr);                      // ldr r0, =pc
+  emit_op_io(0xe51f1000, old_op_ptr);                  // ldr r1, =old_op
+  emit_op   (0xe1a04002);                              // mov r4, r2
+  emit_op   (0xe1a0e00f);                              // mov lr, pc
+  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler); // ldr pc, =handle_op
+  emit_op   (0xe8947fff);                              // ldmia r4, {r0-r14}
+  emit_op   (make_jmp(g_code_ptr, pc + 1));            // jmp <back>
+
+  // sync caches
+  sys_cacheflush(pc, pc + 1);
+  sys_cacheflush(g_linkpage, g_code_ptr);
+
+  lp_size = (char *)g_code_ptr - (char *)g_linkpage;
+  printf("code #%d %d/%d\n", g_linkpage_count, lp_size, LINKPAGE_SIZE);
+
+  if (lp_size + 13*4 > LINKPAGE_SIZE) {
+    g_linkpage_count++;
+    if (g_linkpage_count >= LINKPAGE_COUNT) {
+      fprintf(stderr, "too many linkpages needed\n");
+      abort();
+    }
+    g_linkpage = (void *)((char *)g_linkpage + LINKPAGE_SIZE);
+    init_linkpage();
+  }
+  //handle_op(regs[15], op, regs, (u32)info->si_addr);
+  //regs[15] += 4;
 }
-
-#define LINKPAGE_SIZE 0x1000
-
-struct linkpage {
-  u32 (*xread8)(u32 a);
-  u32 (*xread16)(u32 a);
-  u32 (*xread32)(u32 a);
-  void (*xwrite8)(u32 a, u32 d);
-  void (*xwrite16)(u32 a, u32 d);
-  void (*xwrite32)(u32 a, u32 d);
-  u32 retval;
-  u32 *reg_ptr;
-  u32 saved_regs[6]; // r0-r3,r12,lr
-  u32 code[0];
-};
-
-static struct linkpage *g_linkpage;
-static u32 *g_code_ptr;
 
 void emu_init(void *map_bottom)
 {
@@ -226,33 +317,24 @@ void emu_init(void *map_bottom)
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
-  struct linkpage init_linkpage = {
-    .xread8  = xread8,
-    .xread16 = xread16,
-    .xread32 = xread32,
-    .xwrite8  = xwrite8,
-    .xwrite16 = xwrite16,
-    .xwrite32 = xwrite32,
-  };
   void *ret;
 
   sigemptyset(&segv_action.sa_mask);
   sigaction(SIGSEGV, &segv_action, NULL);
 
-  g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_SIZE) & ~0xfff);
-  ret = mmap(g_linkpage, LINKPAGE_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
+  ret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
   if (ret != g_linkpage) {
     perror("mmap linkpage");
     exit(1);
   }
-  printf("linkpage @ %p\n", g_linkpage);
-  memcpy(g_linkpage, &init_linkpage, sizeof(*g_linkpage));
-  g_linkpage->reg_ptr = g_linkpage->saved_regs;
-  g_code_ptr = g_linkpage->code;
+  printf("linkpages @ %p\n", g_linkpage);
+  init_linkpage();
 
   memdev = open("/dev/mem", O_RDWR);
   memregs = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xc0000000);
   blitter = mmap(NULL, 0x100, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xe0020000);
+  //blitter = mmap(NULL, 0x100, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
   printf("mapped %d %p %p\n", memdev, memregs, blitter);
 }
 
