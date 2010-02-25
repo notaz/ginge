@@ -5,6 +5,8 @@
 #include <elf.h>
 #include <sys/mman.h>
 
+#include "header.h"
+
 #define CHECK_(val, fail_operator, expect, err_msg) \
   if (val fail_operator expect) { \
     fprintf(stderr, err_msg ", exiting (%d)\n", (int)(long)val); \
@@ -28,8 +30,6 @@
   return 1; \
 }
 
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
-
 typedef struct {
   unsigned long start;
   unsigned long end;
@@ -51,10 +51,10 @@ static int is_range_used(maps_range *maps, int map_cnt, unsigned long start, uns
 }
 
 extern char **environ;
-extern void do_entry(Elf32_Addr entry, void *stack_frame, int stack_frame_size, void *exitf);
 
 int main(int argc, char *argv[])
 {
+  void *lowest_segment = (void *)-1;
   Elf32_Ehdr hdr;
   Elf32_Phdr *phdr;
   FILE *fi;
@@ -139,8 +139,16 @@ int main(int argc, char *argv[])
         FAIL_PERROR("fseek");
       if (fread((char *)ptr + align, 1, phdr[i].p_filesz, fi) != phdr[i].p_filesz)
         FAIL_PERROR("too small or");
+
+      if (phdr[i].p_flags & PF_X)
+        do_patches((char *)ptr + align, phdr[i].p_filesz);
     }
+
+    if (map_ptr < lowest_segment)
+      lowest_segment = map_ptr;
   }
+
+  emu_init(lowest_segment);
 
   stack_frame[0] = 1; // argc
   stack_frame[1] = (long)argv[1];
