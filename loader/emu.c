@@ -1,6 +1,7 @@
 // vim:shiftwidth=2:expandtab
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -20,84 +21,170 @@ typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
 
-static int memdev;
-static volatile u16 *memregs, *blitter;
+struct uppermem_block {
+  u32 addr; // physical
+  u32 size;
+  void *mem;
+  struct uppermem_block *next;
+};
+
+static struct uppermem_block *upper_mem;
+
+static struct {
+  u32 dstctrl;
+  u32 dstaddr;
+  u32 dststride;
+  u32 srcctrl;
+  u32 srcaddr;          //
+  u32 srcstride;
+  u32 srcforcolor;
+  u32 srcbackcolor;
+  u32 patctrl;          //
+  u32 patforcolor;
+  u32 patbackcolor;
+  u32 size;
+  u32 ctrl;             //
+  u32 run;
+  u32 intc;
+  u32 srcfifo;
+} blitter;
+
+static struct {
+  union {
+    u32 mlc_stl_eadr;
+    struct {
+      u16 mlc_stl_eadrl;
+      u16 mlc_stl_eadrh;
+    };
+  };
+} mmsp2;
+
+static u16 *host_screen;
+static int host_stride;
 
 
-static volatile void *translate_addr(u32 a, u32 *mask)
+static void *upper_lookup(u32 addr, u8 **mem_end, int *stride_override)
 {
-  if ((a & 0xfff00000) == 0x7f000000) {
-    *mask = 0xffff;
-    return memregs;
+  struct uppermem_block *ub;
+
+  // maybe the screen?
+  if (mmsp2.mlc_stl_eadr <= addr && addr < mmsp2.mlc_stl_eadr + 320*240*2) {
+    host_screen = host_video_flip(); // HACK
+    *mem_end = (u8 *)host_screen + host_stride * 240;
+    *stride_override = host_stride;
+    return (u8 *)host_screen + addr - mmsp2.mlc_stl_eadr;
   }
-  if ((a & 0xfff00000) == 0x7f100000) {
-    *mask = 0xff;
-    return blitter;
+
+  for (ub = upper_mem; ub != NULL; ub = ub->next) {
+    if (ub->addr <= addr && addr < ub->addr + ub->size) {
+      *mem_end = (u8 *)ub->mem + ub->size;
+      return (u8 *)ub->mem + addr - ub->addr;
+    }
   }
-  fprintf(stderr, "bad IO @ %08x\n", a);
-  abort();
+
+  return NULL;
+}
+
+static void blitter_do(void)
+{
+  u8 *dst, *dste, *src, *srce;
+  int w, h, sstrd, dstrd;
+
+  if (blitter.srcaddr == blitter.dstaddr)
+    return; // dummy blit?
+
+  w = blitter.size & 0x7ff;
+  h = (blitter.size >> 16) & 0x7ff;
+  sstrd = blitter.srcstride;
+  dstrd = blitter.dststride;
+
+  dst = upper_lookup(blitter.dstaddr, &dste, &dstrd);
+  src = upper_lookup(blitter.srcaddr, &srce, &sstrd);
+
+  if (dst == NULL || src == NULL) {
+    printf("blit %08x->%08x %dx%d translated to %p->%p\n",
+      blitter.srcaddr, blitter.dstaddr, w, h, src, dst);
+    return;
+  }
+
+  if (dst + dstrd * h > dste) {
+    printf("blit %08x->%08x %dx%d did not fit dst\n",
+      blitter.srcaddr, blitter.dstaddr, w, h);
+    h = (dste - dst) / dstrd;
+  }
+
+  if (src + sstrd * h > srce) {
+    printf("blit %08x->%08x %dx%d did not fit src\n",
+      blitter.srcaddr, blitter.dstaddr, w, h);
+    h = (srce - src) / sstrd;
+  }
+
+  for (; h > 0; h--, dst += dstrd, src += sstrd)
+    memcpy(dst, src, w * 2);
 }
 
 static u32 xread8(u32 a)
 {
-  volatile u8 *mem;
-  u32 mask;
-
   iolog("r8  %08x\n", a);
-  mem = translate_addr(a, &mask);
-  return mem[a & mask];
+  return 0;
 }
 
 static u32 xread16(u32 a)
 {
-  volatile u16 *mem;
-  u32 mask;
-
- //if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a & 0xffff; }
+// if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a & 0xffff; }
   iolog("r16 %08x\n", a);
-  mem = translate_addr(a, &mask);
-  return mem[(a & mask) / 2];
+  return 0;
 }
 
 static u32 xread32(u32 a)
 {
-  volatile u32 *mem;
-  u32 mask;
-
- //if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a; }
+  u32 d = 0;
+  if ((a & 0xfff00000) == 0x7f100000) {
+    u32 *bl = &blitter.dstctrl;
+    a &= 0xfff;
+    if (a < 0x40)
+      d = bl[a / 4];
+    if (a == 0x34)
+      d = 0; // not busy
+  }
   iolog("r32 %08x\n", a);
-  mem = translate_addr(a, &mask);
-  return mem[(a & mask) / 4];
+  return d;
 }
 
 static void xwrite8(u32 a, u32 d)
 {
-  volatile u8 *mem;
-  u32 mask;
-
   iolog("w8  %08x %08x\n", a, d);
-  mem = translate_addr(a, &mask);
-  mem[a & mask] = d;
 }
 
 static void xwrite16(u32 a, u32 d)
 {
-  volatile u16 *mem;
-  u32 mask;
-
   iolog("w16 %08x %08x\n", a, d);
-  mem = translate_addr(a, &mask);
-  mem[(a & mask) / 2] = d;
+  if ((a & 0xfff00000) == 0x7f000000) {
+    a &= 0xffff;
+    switch (a) {
+      case 0x2912: mmsp2.mlc_stl_eadrl = d; break;
+      case 0x2914: mmsp2.mlc_stl_eadrh = d; break;
+    }
+    printf("w16 %08x %08x\n", a, d);
+  }
 }
 
 static void xwrite32(u32 a, u32 d)
 {
-  volatile u32 *mem;
-  u32 mask;
-
   iolog("w32 %08x %08x\n", a, d);
-  mem = translate_addr(a, &mask);
-  mem[(a & mask) / 4] = d;
+  if ((a & 0xfff00000) == 0x7f000000) {
+    printf("w32 %08x %08x\n", a, d);
+    return;
+  }
+  if ((a & 0xfff00000) == 0x7f100000) {
+    u32 *bl = &blitter.dstctrl;
+    a &= 0xfff;
+    if (a < 0x40)
+      bl[a / 4] = d;
+    if (a == 0x34 && (d & 1))
+      blitter_do();
+    return;
+  }
 }
 
 #define BIT_SET(v, b) (v & (1 << (b)))
@@ -331,36 +418,81 @@ void emu_init(void *map_bottom)
   printf("linkpages @ %p\n", g_linkpage);
   init_linkpage();
 
-  memdev = open("/dev/mem", O_RDWR);
-  memregs = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xc0000000);
-  blitter = mmap(NULL, 0x100, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xe0020000);
-  //blitter = mmap(NULL, 0x100, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-  printf("mapped %d %p %p\n", memdev, memregs, blitter);
+  // host stuff
+  host_screen = host_video_init(&host_stride);
+  if (host_screen == NULL) {
+    printf("can't alloc screen\n");
+    exit(1);
+  }
+}
+
+int emu_read_gpiodev(void *buf, int count)
+{
+  unsigned int btns;
+
+  if (count < 4) {
+    printf("gpiodev read %d?\n", count);
+    return -1;
+  }
+
+  btns = host_read_btns();
+  memcpy(buf, &btns, 4);
+  return 4;
 }
 
 void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
+  struct uppermem_block *umem;
   char name[32];
   int fd;
 
+  // SoC regs
   if ((offset & ~0xffff) == 0xc0000000) {
     return mmap((void *)0x7f000000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
+  // blitter
   if ((offset & ~0xffff) == 0xe0020000) {
     return mmap((void *)0x7f100000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
-  // pass through
-  if ((offset & 0xfe000000) == 0x02000000)
-    return mmap(NULL, length, prot, flags, memdev, offset);
+  // upper mem
+  if ((offset & 0xfe000000) != 0x02000000)
+    printf("unexpected devmem mmap @ %08x\n", offset);
 
+  // return mmap(NULL, length, prot, flags, memdev, offset);
+
+  umem = calloc(1, sizeof(*umem));
+  if (umem == NULL) {
+    printf("OOM\n");
+    return MAP_FAILED;
+  }
+
+  umem->addr = offset;
+  umem->size = length;
+  umem->mem = mmap(NULL, length, prot, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  if (umem->mem != MAP_FAILED)
+    goto done;
+
+  printf("upper mem @ %08x %d mmap fail, trying backing file\n", offset, length);
   sprintf(name, "m%08x", offset);
   fd = open(name, O_CREAT|O_RDWR, 0644);
   lseek(fd, length - 1, SEEK_SET);
   name[0] = 0;
   write(fd, name, 1);
 
-  return mmap(NULL, length, prot, MAP_SHARED, fd, 0);
+  umem->mem = mmap(NULL, length, prot, MAP_SHARED, fd, 0);
+  if (umem->mem == MAP_FAILED) {
+    printf("failed, giving up\n");
+    close(fd);
+    free(umem);
+    return MAP_FAILED;
+  }
+
+done:
+  printf("upper mem @ %08x %d\n", offset, length);
+  umem->next = upper_mem;
+  upper_mem = umem;
+  return umem->mem;
 }
 

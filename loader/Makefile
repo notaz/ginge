@@ -14,7 +14,7 @@ ASFLAGS += -mfloat-abi=soft
 OBJ += sys_cacheflush.o
 endif
 
-OBJ += loader.o loader_$(ARCH).o patches.o emu.o
+OBJ += loader.o loader_$(ARCH).o patches.o emu.o host_fb.o host_pnd.o
 
 loader: $(OBJ)
 

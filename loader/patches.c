@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include "header.h"
 #include "sys_cacheflush.h"
@@ -22,15 +23,22 @@ static const unsigned int sig_mmap_[] = {
   0xe1b0ca05, 0x1a000006, 0xe1a05625, 0xef9000c0
 };
 
-#define FAKE_DEVMEM_DEVICE 10001
+static const unsigned int sig_read[] = {
+  0xe59fc080, 0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900003
+};
+
+#define FAKE_DEVMEM_DEVICE      10001
+#define FAKE_DEVGPIO_DEVICE     10002
 
 static int w_open(const char *pathname, int flags, mode_t mode)
 {
   int ret;
-  if (strcmp(pathname, "/dev/mem") != 0)
-    ret = open(pathname, flags, mode);
-  else
+  if      (strcmp(pathname, "/dev/mem") == 0)
     ret = FAKE_DEVMEM_DEVICE;
+  else if (strcmp(pathname, "/dev/GPIO") == 0)
+    ret = FAKE_DEVGPIO_DEVICE;
+  else
+    ret = open(pathname, flags, mode);
 
   printf("open(%s) = %d\n", pathname, ret);
   return ret;
@@ -49,6 +57,17 @@ static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_
 }
 #define w_mmap_ w_mmap
 
+ssize_t w_read(int fd, void *buf, size_t count)
+{
+  ssize_t ret;
+  if (fd != FAKE_DEVGPIO_DEVICE)
+    return read(fd, buf, count);
+
+  ret = emu_read_gpiodev(buf, count);
+  //printf("read(%d, %p, %d) = %d\n", fd, buf, count, ret);
+  return ret;
+}
+
 #define PATCH(f) { sig_##f, ARRAY_SIZE(sig_##f), w_##f }
 
 static const struct {
@@ -59,6 +78,7 @@ static const struct {
   PATCH(open),
   PATCH(mmap),
   PATCH(mmap_), // mmap using mmap2 syscall
+  PATCH(read),
 };
 
 void do_patches(void *ptr, unsigned int size)
