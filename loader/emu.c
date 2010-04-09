@@ -16,6 +16,8 @@
 
 //#define iolog printf
 #define iolog(...)
+//#define segvlog printf
+#define segvlog(...)
 
 typedef unsigned int   u32;
 typedef unsigned short u16;
@@ -49,6 +51,10 @@ static struct {
   u32 srcfifo;
 } blitter;
 
+#define SRCCTRL_INVIDEO         (1 << 8)
+#define SRCCTRL_SRCENB          (1 << 7)
+#define CTRL_TRANSPARENCYENB    (1 << 11)
+
 static struct {
   union {
     u32 mlc_stl_eadr;
@@ -62,6 +68,49 @@ static struct {
 static u16 *host_screen;
 static int host_stride;
 
+
+static void memset16(void *dst, u32 pattern, int count)
+{
+  u32 *dl;
+  u16 *d;
+  
+  d = (u16 *)((long)dst & ~1);
+  if ((long)d & 2) {
+    *d++ = pattern;
+    count--;
+  }
+  dl = (void *)d;
+  pattern |= pattern << 16;
+
+  while (count >= 2) {
+    *dl++ = pattern;
+    count -= 2;
+  }
+  if (count)
+    *(u16 *)dl = pattern;
+}
+
+static void blt_tr(void *dst, void *src, u32 trc, int w)
+{
+  u16 *d = (u16 *)((long)dst & ~1);
+  u16 *s = (u16 *)((long)src & ~1);
+
+  // XXX: optimize
+  for (; w > 0; d++, s++, w--)
+    if (*s != trc)
+      *d = *s;
+}
+
+#define dump_blitter() \
+{ \
+  u32 *r = &blitter.dstctrl; \
+  int i; \
+  for (i = 0; i < 4*4; i++, r++) { \
+    printf("%08x ", *r); \
+    if ((i & 3) == 3) \
+      printf("\n"); \
+  } \
+}
 
 static void *upper_lookup(u32 addr, u8 **mem_end, int *stride_override)
 {
@@ -87,24 +136,36 @@ static void *upper_lookup(u32 addr, u8 **mem_end, int *stride_override)
 
 static void blitter_do(void)
 {
-  u8 *dst, *dste, *src, *srce;
+  u8 *dst, *dste, *src = NULL, *srce = NULL;
   int w, h, sstrd, dstrd;
-
-  if (blitter.srcaddr == blitter.dstaddr)
-    return; // dummy blit?
+  u32 addr;
 
   w = blitter.size & 0x7ff;
   h = (blitter.size >> 16) & 0x7ff;
   sstrd = blitter.srcstride;
   dstrd = blitter.dststride;
 
-  dst = upper_lookup(blitter.dstaddr, &dste, &dstrd);
-  src = upper_lookup(blitter.srcaddr, &srce, &sstrd);
+  // XXX: need to confirm this..
+  addr = (blitter.dstaddr & ~3) | ((blitter.dstctrl & 0x1f) >> 3);
+  dst = upper_lookup(addr, &dste, &dstrd);
+  if (dst == NULL)
+    goto bad_blit;
 
-  if (dst == NULL || src == NULL) {
-    printf("blit %08x->%08x %dx%d translated to %p->%p\n",
-      blitter.srcaddr, blitter.dstaddr, w, h, src, dst);
-    return;
+  // XXX: assume fill if no SRCENB, but it could be pattern blit..
+  if (blitter.srcctrl & SRCCTRL_SRCENB) {
+    if (!(blitter.srcctrl & SRCCTRL_INVIDEO))
+      goto bad_blit;
+
+    addr = (blitter.srcaddr & ~3) | ((blitter.srcctrl & 0x1f) >> 3);
+    src = upper_lookup(addr, &srce, &sstrd);
+    if (src == NULL)
+      goto bad_blit;
+
+    if (src + sstrd * h > srce) {
+      printf("blit %08x->%08x %dx%d did not fit src\n",
+        blitter.srcaddr, blitter.dstaddr, w, h);
+      h = (srce - src) / sstrd;
+    }
   }
 
   if (dst + dstrd * h > dste) {
@@ -113,14 +174,30 @@ static void blitter_do(void)
     h = (dste - dst) / dstrd;
   }
 
-  if (src + sstrd * h > srce) {
-    printf("blit %08x->%08x %dx%d did not fit src\n",
-      blitter.srcaddr, blitter.dstaddr, w, h);
-    h = (srce - src) / sstrd;
+  if (src != NULL) {
+    // copy
+    if (blitter.ctrl & CTRL_TRANSPARENCYENB) {
+      u32 trc = blitter.ctrl >> 16;
+      for (; h > 0; h--, dst += dstrd, src += sstrd)
+        blt_tr(dst, src, trc, w);
+    }
+    else {
+      for (; h > 0; h--, dst += dstrd, src += sstrd)
+        memcpy(dst, src, w * 2);
+    }
   }
+  else {
+    // fill. Assume the pattern is cleared and bg color is used
+    u32 bgc = blitter.patbackcolor & 0xffff;
+    for (; h > 0; h--, dst += dstrd)
+      memset16(dst, bgc, w);
+  }
+  return;
 
-  for (; h > 0; h--, dst += dstrd, src += sstrd)
-    memcpy(dst, src, w * 2);
+bad_blit:
+  printf("blit %08x->%08x %dx%d translated to %p->%p\n",
+    blitter.srcaddr, blitter.dstaddr, w, h, src, dst);
+  dump_blitter();
 }
 
 static u32 xread8(u32 a)
@@ -165,7 +242,7 @@ static void xwrite16(u32 a, u32 d)
       case 0x2912: mmsp2.mlc_stl_eadrl = d; break;
       case 0x2914: mmsp2.mlc_stl_eadrh = d; break;
     }
-    printf("w16 %08x %08x\n", a, d);
+    //printf("w16 %08x %08x\n", a, d);
   }
 }
 
@@ -353,7 +430,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
     signal(num, SIG_DFL);
     raise(num);
   }
-  printf("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
+  segvlog("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
 
   // spit PC and op
   pc_ptr = g_code_ptr++;
@@ -383,7 +460,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   sys_cacheflush(g_linkpage, g_code_ptr);
 
   lp_size = (char *)g_code_ptr - (char *)g_linkpage;
-  printf("code #%d %d/%d\n", g_linkpage_count, lp_size, LINKPAGE_SIZE);
+  segvlog("code #%d %d/%d\n", g_linkpage_count, lp_size, LINKPAGE_SIZE);
 
   if (lp_size + 13*4 > LINKPAGE_SIZE) {
     g_linkpage_count++;

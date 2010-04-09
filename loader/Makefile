@@ -1,9 +1,15 @@
+ARCH ?= arm
+CROSS_COMPILE ?= arm-linux-
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 CFLAGS += -Wall -ggdb
 LDFLAGS += -static -ggdb
+ifndef DEBUG
+CFLAGS += -O2 -fno-strict-aliasing
+LDFLAGS += -s -O2
+endif
 
-ifndef ARCH
+ifeq "$(ARCH)" "ia32"
 ARCH = ia32
 CFLAGS += -m32
 LDFLAGS += -m32

@@ -10,6 +10,8 @@
 #include "header.h"
 #include "sys_cacheflush.h"
 
+#define strace(...)
+
 static const unsigned int sig_open[] = {
   0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900005
 };
@@ -40,7 +42,7 @@ static int w_open(const char *pathname, int flags, mode_t mode)
   else
     ret = open(pathname, flags, mode);
 
-  printf("open(%s) = %d\n", pathname, ret);
+  strace("open(%s) = %d\n", pathname, ret);
   return ret;
 }
 
@@ -52,7 +54,7 @@ static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_
   else
     ret = emu_mmap_dev(length, prot, flags, offset);
 
-  printf("mmap(%p, %x, %x, %x, %d, %lx) = %p\n", addr, length, prot, flags, fd, (long)offset, ret);
+  strace("mmap(%p, %x, %x, %x, %d, %lx) = %p\n", addr, length, prot, flags, fd, (long)offset, ret);
   return ret;
 }
 #define w_mmap_ w_mmap
