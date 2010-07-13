@@ -496,11 +496,12 @@ void emu_init(void *map_bottom)
   init_linkpage();
 
   // host stuff
-  host_screen = host_video_init(&host_stride);
-  if (host_screen == NULL) {
+  ret = host_video_init(&host_stride, 0);
+  if (ret != 0) {
     printf("can't alloc screen\n");
     exit(1);
   }
+  host_screen = host_video_flip();
 }
 
 int emu_read_gpiodev(void *buf, int count)

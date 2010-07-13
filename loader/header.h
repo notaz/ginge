@@ -1,3 +1,4 @@
+#include "../common/host_fb.h"
 
 void do_entry(unsigned long entry, void *stack_frame, int stack_frame_cnt, void *exitf);
 
@@ -7,8 +8,6 @@ void  emu_init(void *map_bottom);
 void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset);
 int   emu_read_gpiodev(void *buf, int count);
 
-void *host_video_init(int *stride);
-void *host_video_flip(void);
 int   host_read_btns(void);
 
 enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,

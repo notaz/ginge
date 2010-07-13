@@ -20,11 +20,14 @@ ASFLAGS += -mfloat-abi=soft
 OBJ += sys_cacheflush.o
 endif
 
+vpath %.c = ../common/
+
 OBJ += loader.o loader_$(ARCH).o patches.o emu.o host_fb.o host_pnd.o
 
-loader: $(OBJ)
+ginge_sloader: LDFLAGS += -Wl,-T script_$(ARCH).lds
 
-loader: LDFLAGS += -Wl,-T script_$(ARCH).lds
+ginge_sloader: $(OBJ)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 clean:
 	$(RM) loader $(OBJ)
