@@ -60,11 +60,11 @@ int main(int argc, char *argv[])
   FILE *fi;
   maps_range maps[16];
   int map_cnt;
-  int i, ret;
-  long stack_frame[5];
+  int i, ret, envc, sfp;
+  long *stack_frame;
 
-  if (argc != 2) {
-    fprintf(stderr, "usage: %s <program>\n", argv[0]);
+  if (argc < 2) {
+    fprintf(stderr, "usage: %s <program> [args]\n", argv[0]);
     return 1;
   }
 
@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
   }
 
   HDR_CHECK_EQ(e_type, ET_EXEC, "not executable");
-//  HDR_CHECK_EQ(e_machine, EM_ARM, "not ARM");
+  HDR_CHECK_EQ(e_machine, EM_ARM, "not ARM");
   HDR_CHECK_EQ(e_phentsize, sizeof(Elf32_Phdr), "bad PH entry size");
   HDR_CHECK_NE(e_phnum, 0, "no PH entries");
 
@@ -150,15 +150,29 @@ int main(int argc, char *argv[])
 
   emu_init(lowest_segment);
 
-  stack_frame[0] = 1; // argc
-  stack_frame[1] = (long)argv[1];
-  stack_frame[2] = 0;
-  stack_frame[3] = (long)environ;
-  stack_frame[4] = 0;
+  // generate stack frame: argc, argv[], NULL, env[], NULL
+  for (envc = 0; environ[envc] != NULL; envc++)
+    ;
 
-  printf("entering %08x\n", hdr.e_entry);
-  do_entry(hdr.e_entry, stack_frame, 5, NULL);
+  stack_frame = calloc(argc + envc + 3, sizeof(stack_frame[0]));
+  if (stack_frame == NULL) {
+    fprintf(stderr, "stack_frame OOM\n");
+    return 1;
+  }
 
-  return 0;
+  sfp = 0;
+  stack_frame[sfp++] = argc - 1;
+  for (i = 1; i < argc; i++)
+    stack_frame[sfp++] = (long)argv[i];
+  stack_frame[sfp++] = 0;
+  for (i = 0; i < envc; i++)
+    stack_frame[sfp++] = (long)environ[i];
+  stack_frame[sfp++] = 0;
+
+  printf("entering %08x, %d stack entries\n", hdr.e_entry, sfp);
+  do_entry(hdr.e_entry, stack_frame, sfp, NULL);
+
+  fprintf(stderr, "do_entry failed!\n");
+  return 1;
 }
 

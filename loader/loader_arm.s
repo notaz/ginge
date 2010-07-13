@@ -1,6 +1,6 @@
 .text
 
-/* void do_entry(Elf32_Addr entry, void *stack_frame, int stack_frame_size, void *exitf); */
+/* void do_entry(Elf32_Addr entry, void *stack_frame, int stack_frame_elems, void *exitf); */
 
 .globl do_entry
 do_entry:
@@ -13,5 +13,16 @@ do_entry:
     str   r0, [r4], #4
     bgt   0b
 
+/*
+ r0 - atexit func
+ sp - stack frame of:
+   argc
+   argv[0]
+   ...
+   NULL
+   envp[0]
+   ...
+   NULL
+*/
     mov   r0, r3
     bx    r5

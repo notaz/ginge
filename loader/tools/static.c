@@ -1,18 +1,27 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 
-int main()
+int main(int argc, char *argv[])
 {
 	volatile void *memregs;
 	int memdev;
 	int i;
 
-	printf("hi\n");
+	printf("hi, home=%s\n", getenv("HOME"));
+
+	for (i = 0; i < argc; i++)
+		printf("%d \"%s\"\n", i, argv[i]);
 
 	memdev = open("/dev/mem", O_RDWR);
+	if (memdev < 0) {
+		perror("open");
+		return 1;
+	}
+
 	memregs = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xc0000000);
 
 	for (i = 0; i < 2; i++)
