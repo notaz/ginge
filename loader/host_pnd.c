@@ -12,29 +12,41 @@
 
 #include "header.h"
 
-static int ifd = -1;
+static int ifds[2] = { -1, -1 };
+static int init_done;
 static int keystate;
 
 static void init(void)
 {
   char buff[64];
-  int i;
+  int i, ifd, ret;
 
-  for (ifd = -1, i = 0; ; i++) {
+  for (ifd = -1, i = 0; ifds[0] == -1 || ifds[1] == -1; i++) {
     snprintf(buff, sizeof(buff), "/dev/input/event%i", i);
     ifd = open(buff, O_RDONLY | O_NONBLOCK);
     if (ifd == -1)
       break;
 
-    ioctl(ifd, EVIOCGNAME(sizeof(buff)), buff);
-
-    if (strcasestr(buff, "gpio") != NULL)
+    ret = ioctl(ifd, EVIOCGNAME(sizeof(buff)), buff);
+    if (ret < 0)
       break;
+
+    if (strcasestr(buff, "gpio") != NULL) {
+      ifds[0] = ifd;
+      continue;
+    }
+    if (strcasestr(buff, "keypad") != NULL) {
+      ifds[1] = ifd;
+      continue;
+    }
     close(ifd);
   }
 
-  if (ifd < 0)
-    printf("no input device\n");
+  if (ifds[0] < 0)
+    fprintf(stderr, PFX "missing buttons\n");
+  if (ifds[1] < 0)
+    fprintf(stderr, PFX "missing keypad\n");
+  init_done = 1;
 }
 
 static const struct {
@@ -61,6 +73,9 @@ static const struct {
   { BTN_START,      GP2X_START },
   { KEY_LEFTCTRL,   GP2X_SELECT },
   { BTN_SELECT,     GP2X_SELECT },
+  { KEY_COMMA,      GP2X_VOL_DOWN },
+  { KEY_DOT,        GP2X_VOL_UP },
+  { KEY_Q,          GP2X_PUSH },
 };
 
 int host_read_btns(void)
@@ -68,20 +83,24 @@ int host_read_btns(void)
   struct input_event ev;
   int i, ret;
 
-  if (ifd < 0)
+  if (!init_done)
     init();
-  if (ifd < 0)
-    return keystate;
 
   while (1)
   {
-    ret = read(ifd, &ev, sizeof(ev));
+    ret = read(ifds[0], &ev, sizeof(ev));
     if (ret < (int) sizeof(ev)) {
       if (errno != EAGAIN && errno != EWOULDBLOCK)
-        perror("evtest: read error");
+        perror(PFX "read error");
 
-      return keystate;
+      ret = read(ifds[1], &ev, sizeof(ev));
+      if (ret < (int) sizeof(ev))
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+          perror(PFX "read error");
     }
+
+    if (ret < (int) sizeof(ev))
+      return keystate;
 
     if (ev.type != EV_KEY)
       continue;

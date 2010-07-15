@@ -14,10 +14,31 @@
 #include "header.h"
 #include "sys_cacheflush.h"
 
-//#define iolog printf
+//#define LOG_IO
+//#define LOG_IO_UNH
+//#define LOG_SEGV
+
+#ifdef LOG_IO
+#define iolog log_io
+#else
 #define iolog(...)
-//#define segvlog printf
+#endif
+
+#ifdef LOG_IO_UNH
+#define iolog_unh log_io
+#else
+#define iolog_unh(...)
+#endif
+
+#ifdef LOG_SEGV
+#define segvlog printf
+#else
 #define segvlog(...)
+#endif
+
+#if defined(LOG_IO) || defined(LOG_IO_UNH)
+#include "mmsp2-regs.h"
+#endif
 
 typedef unsigned int   u32;
 typedef unsigned short u16;
@@ -56,18 +77,47 @@ static struct {
 #define CTRL_TRANSPARENCYENB    (1 << 11)
 
 static struct {
+  u16 mlc_stl_cntl;
   union {
-    u32 mlc_stl_eadr;
+    u32 mlc_stl_adr;
     struct {
-      u16 mlc_stl_eadrl;
-      u16 mlc_stl_eadrh;
+      u16 mlc_stl_adrl;
+      u16 mlc_stl_adrh;
     };
   };
+  u16 mlc_stl_pallt_a;
+  union {
+    u16 mlc_stl_pallt_d[256*2];
+    u32 mlc_stl_pallt_d32[256];
+  };
+
+  // state
+  u16 host_pal[256];
+  u32 old_mlc_stl_adr;
+  u32 btn_state; // as seen through /dev/GPIO
+  u16 dirty_pal:1;
 } mmsp2;
 
 static u16 *host_screen;
 static int host_stride;
 
+
+#if defined(LOG_IO) || defined(LOG_IO_UNH)
+static void log_io(const char *pfx, u32 a, u32 d, int size)
+{
+  const char *fmt, *reg = "";
+  switch (size) {
+  case  8: fmt = "%s %08x       %02x %s\n"; break;
+  case 32: fmt = "%s %08x %08x %s\n"; break;
+  default: fmt = "%s %08x     %04x %s\n"; break;
+  }
+
+  if ((a & ~0xffff) == 0x7f000000)
+    reg = regnames[a & 0xffff];
+
+  printf(fmt, pfx, a, d, reg);
+}
+#endif
 
 static void memset16(void *dst, u32 pattern, int count)
 {
@@ -112,17 +162,9 @@ static void blt_tr(void *dst, void *src, u32 trc, int w)
   } \
 }
 
-static void *upper_lookup(u32 addr, u8 **mem_end, int *stride_override)
+static void *uppermem_lookup(u32 addr, u8 **mem_end)
 {
   struct uppermem_block *ub;
-
-  // maybe the screen?
-  if (mmsp2.mlc_stl_eadr <= addr && addr < mmsp2.mlc_stl_eadr + 320*240*2) {
-    host_screen = host_video_flip(); // HACK
-    *mem_end = (u8 *)host_screen + host_stride * 240;
-    *stride_override = host_stride;
-    return (u8 *)host_screen + addr - mmsp2.mlc_stl_eadr;
-  }
 
   for (ub = upper_mem; ub != NULL; ub = ub->next) {
     if (ub->addr <= addr && addr < ub->addr + ub->size) {
@@ -134,10 +176,24 @@ static void *upper_lookup(u32 addr, u8 **mem_end, int *stride_override)
   return NULL;
 }
 
+static void *blitter_mem_lookup(u32 addr, u8 **mem_end, int *stride_override, int *to_screen)
+{
+  // maybe the screen?
+  if (mmsp2.mlc_stl_adr <= addr && addr < mmsp2.mlc_stl_adr + 320*240*2) {
+    *mem_end = (u8 *)host_screen + host_stride * 240;
+    *stride_override = host_stride;
+    *to_screen = 1;
+    return (u8 *)host_screen + addr - mmsp2.mlc_stl_adr;
+  }
+
+  return uppermem_lookup(addr, mem_end);
+}
+
 static void blitter_do(void)
 {
   u8 *dst, *dste, *src = NULL, *srce = NULL;
   int w, h, sstrd, dstrd;
+  int to_screen = 0;
   u32 addr;
 
   w = blitter.size & 0x7ff;
@@ -147,7 +203,7 @@ static void blitter_do(void)
 
   // XXX: need to confirm this..
   addr = (blitter.dstaddr & ~3) | ((blitter.dstctrl & 0x1f) >> 3);
-  dst = upper_lookup(addr, &dste, &dstrd);
+  dst = blitter_mem_lookup(addr, &dste, &dstrd, &to_screen);
   if (dst == NULL)
     goto bad_blit;
 
@@ -157,19 +213,19 @@ static void blitter_do(void)
       goto bad_blit;
 
     addr = (blitter.srcaddr & ~3) | ((blitter.srcctrl & 0x1f) >> 3);
-    src = upper_lookup(addr, &srce, &sstrd);
+    src = blitter_mem_lookup(addr, &srce, &sstrd, &to_screen);
     if (src == NULL)
       goto bad_blit;
 
     if (src + sstrd * h > srce) {
-      printf("blit %08x->%08x %dx%d did not fit src\n",
+      err("blit %08x->%08x %dx%d did not fit src\n",
         blitter.srcaddr, blitter.dstaddr, w, h);
       h = (srce - src) / sstrd;
     }
   }
 
   if (dst + dstrd * h > dste) {
-    printf("blit %08x->%08x %dx%d did not fit dst\n",
+    err("blit %08x->%08x %dx%d did not fit dst\n",
       blitter.srcaddr, blitter.dstaddr, w, h);
     h = (dste - dst) / dstrd;
   }
@@ -192,25 +248,142 @@ static void blitter_do(void)
     for (; h > 0; h--, dst += dstrd)
       memset16(dst, bgc, w);
   }
+
+  if (to_screen)
+    host_screen = host_video_flip();
   return;
 
 bad_blit:
-  printf("blit %08x->%08x %dx%d translated to %p->%p\n",
+  err("blit %08x->%08x %dx%d translated to %p->%p\n",
     blitter.srcaddr, blitter.dstaddr, w, h, src, dst);
   dump_blitter();
 }
 
+// TODO: hw scaler stuff
+static void mlc_flip(u32 addr)
+{
+  int mode = (mmsp2.mlc_stl_cntl >> 9) & 3;
+  int bpp = mode ? mode * 8 : 4;
+  u16 *dst = host_screen;
+  u16 *hpal = mmsp2.host_pal;
+  u8 *src, *src_end;
+  int i, u;
+
+  src = uppermem_lookup(addr, &src_end);
+  if (src == NULL || src + 320*240 * bpp / 8 > src_end) {
+    err("mlc_flip: %08x is out of range\n", addr);
+    return;
+  }
+
+  if (bpp <= 8 && mmsp2.dirty_pal) {
+    u32 *srcp = mmsp2.mlc_stl_pallt_d32;
+    u16 *dstp = hpal;
+
+    for (i = 0; i < 256; i++, srcp++, dstp++) {
+      u32 t = *srcp;
+      *dstp = ((t >> 8) & 0xf800) | ((t >> 5) & 0x07e0) | ((t >> 3) & 0x001f);
+    }
+    mmsp2.dirty_pal = 0;
+  }
+
+  switch (bpp) {
+  case  4:
+    for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
+      for (u = 320 / 2; u > 0; u--, src++) {
+        *dst++ = hpal[*src >> 4];
+        *dst++ = hpal[*src & 0x0f];
+      }
+    }
+    break;
+
+  case  8:
+    for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
+      for (u = 320 / 4; u > 0; u--) {
+        *dst++ = hpal[*src++];
+        *dst++ = hpal[*src++];
+        *dst++ = hpal[*src++];
+        *dst++ = hpal[*src++];
+      }
+    }
+    break;
+
+  case 16:
+    for (i = 0; i < 240; i++, dst += host_stride / 2, src += 320*2)
+      memcpy(dst, src, 320*2);
+    break;
+
+  case 24:
+    // TODO
+    break;
+  }
+
+  host_screen = host_video_flip();
+}
+
 static u32 xread8(u32 a)
 {
-  iolog("r8  %08x\n", a);
+  iolog("r8 ", a, 0, 8);
+  iolog_unh("r8 ", a, 0, 8);
   return 0;
 }
 
 static u32 xread16(u32 a)
 {
-// if ((a & 0xfff00000) == 0x7f100000) { static int a; a ^= ~1; return a & 0xffff; }
-  iolog("r16 %08x\n", a);
-  return 0;
+  static u32 fudge, old_a;
+  u32 d = 0, t;
+
+  if ((a & 0xffff0000) == 0x7f000000) {
+    u32 a_ = a & 0xffff;
+    switch (a_) {
+    case 0x0910: // FPLL
+    case 0x0912:
+      d = 0x9407;
+      break;
+    // minilib reads as:
+    //  0000 P000 VuVd00 0000 YXBA RLSeSt 0R0D 0L0U
+    // |        GPIOD        |GPIOC[8:15]|GPIOM[0:7]|
+    // /dev/GPIO:
+    //             ... 0PVdVu ...
+    case 0x1184: // GPIOC
+      d = ~mmsp2.btn_state & 0xff00;
+      d |= 0x00ff;
+      break;
+    case 0x1186: // GPIOD
+      t = ~mmsp2.btn_state;
+      d  = (t >> 9)  & 0x0080;
+      d |= (t >> 11) & 0x0040;
+      d |= (t >> 7)  & 0x0800;
+      d |= 0x373b;
+      break;
+    case 0x1198: // GPIOM
+      mmsp2.btn_state = host_read_btns();
+      d = ~mmsp2.btn_state & 0xff;
+      d |= 0x01aa;
+      break;
+    case 0x28da:
+      d = mmsp2.mlc_stl_cntl;
+      break;
+    case 0x2958:
+      d = mmsp2.mlc_stl_pallt_a;
+      break;
+    default:
+      goto unh;
+    }
+    goto out;
+  }
+
+unh:
+  if (a == old_a) {
+    d = fudge;
+    fudge = ~fudge;
+  }
+  old_a = a;
+  iolog_unh("r16", a, d & 0xffff, 16);
+
+out:
+  d &= 0xffff;
+  iolog("r16", a, d, 16);
+  return d;
 }
 
 static u32 xread32(u32 a)
@@ -218,56 +391,110 @@ static u32 xread32(u32 a)
   u32 d = 0;
   if ((a & 0xfff00000) == 0x7f100000) {
     u32 *bl = &blitter.dstctrl;
-    a &= 0xfff;
-    if (a < 0x40)
-      d = bl[a / 4];
-    if (a == 0x34)
-      d = 0; // not busy
+    u32 a_ = a & 0xfff;
+    if (a_ < 0x40) {
+      d = bl[a_ / 4];
+      if (a_ == 0x34)
+        d = 0; // not busy
+      goto out;
+    }
   }
-  iolog("r32 %08x\n", a);
+  iolog_unh("r32", a, d, 32);
+
+out:
+  iolog("r32", a, d, 32);
   return d;
 }
 
 static void xwrite8(u32 a, u32 d)
 {
-  iolog("w8  %08x %08x\n", a, d);
+  iolog("w8 ", a, d, 8);
+  iolog_unh("w8 ", a, d, 8);
 }
 
 static void xwrite16(u32 a, u32 d)
 {
-  iolog("w16 %08x %08x\n", a, d);
+  iolog("w16", a, d, 16);
   if ((a & 0xfff00000) == 0x7f000000) {
-    a &= 0xffff;
-    switch (a) {
-      case 0x2912: mmsp2.mlc_stl_eadrl = d; break;
-      case 0x2914: mmsp2.mlc_stl_eadrh = d; break;
+    u32 a_ = a & 0xffff;
+    switch (a_) {
+    case 0x28da:
+      mmsp2.mlc_stl_cntl = d | 0xaa;
+      break;
+    case 0x290e:
+    case 0x2910:
+      // odd addresses don't affect LCD. What about TV?
+      return;
+    case 0x2912:
+      mmsp2.mlc_stl_adrl = d;
+      return;
+    case 0x2914:
+      mmsp2.mlc_stl_adrh = d;
+      if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr)
+        mlc_flip(mmsp2.mlc_stl_adr);
+      mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
+      return;
+    case 0x2958:
+      mmsp2.mlc_stl_pallt_a = d & 0x1ff;
+      return;
+    case 0x295a:
+      mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++] = d;
+      mmsp2.mlc_stl_pallt_a &= 0x1ff;
+      mmsp2.dirty_pal = 1;
+      return;
     }
-    //printf("w16 %08x %08x\n", a, d);
   }
+  iolog_unh("w16", a, d, 16);
 }
 
 static void xwrite32(u32 a, u32 d)
 {
-  iolog("w32 %08x %08x\n", a, d);
-  if ((a & 0xfff00000) == 0x7f000000) {
-    printf("w32 %08x %08x\n", a, d);
-    return;
-  }
+  iolog("w32", a, d, 32);
+
   if ((a & 0xfff00000) == 0x7f100000) {
     u32 *bl = &blitter.dstctrl;
-    a &= 0xfff;
-    if (a < 0x40)
-      bl[a / 4] = d;
-    if (a == 0x34 && (d & 1))
-      blitter_do();
-    return;
+    u32 a_ = a & 0xfff;
+    if (a_ < 0x40) {
+      bl[a_ / 4] = d;
+      if (a_ == 0x34 && (d & 1))
+        blitter_do();
+      return;
+    }
   }
+  iolog_unh("w32", a, d, 32);
 }
+
+#define LINKPAGE_SIZE 0x1000
+#define LINKPAGE_COUNT 4
+#define LINKPAGE_ALLOC (LINKPAGE_SIZE * LINKPAGE_COUNT)
+
+struct op_context {
+  u32 pc;
+  u32 op;
+  u32 code[0];
+};
+
+struct linkpage {
+  u32 saved_regs[15];
+  u32 cpsr;
+  u32 *handler_stack;
+  void (*handler)(struct op_context *op_ctx);
+  u32 code[0];
+};
+
+static struct linkpage *g_linkpage;
+static u32 *g_code_ptr;
+static int g_linkpage_count;
+
+#define HANDLER_STACK_SIZE 4096
+static void *g_handler_stack_end;
 
 #define BIT_SET(v, b) (v & (1 << (b)))
 
-static void handle_op(u32 pc, u32 op, u32 *regs, u32 addr_check)
+static void handle_op(struct op_context *op_ctx)
 {
+  u32 *regs = g_linkpage->saved_regs;
+  u32 op = op_ctx->op;
   u32 t, shift, ret, addr;
   int rn, rd;
 
@@ -347,29 +574,7 @@ static void handle_op(u32 pc, u32 op, u32 *regs, u32 addr_check)
   return;
 
 unhandled:
-  fprintf(stderr, "unhandled IO op %08x @ %08x\n", op, pc);
-}
-
-#define LINKPAGE_SIZE 0x1000
-#define LINKPAGE_COUNT 4
-#define LINKPAGE_ALLOC (LINKPAGE_SIZE * LINKPAGE_COUNT)
-
-struct linkpage {
-  u32 saved_regs[15];
-  u32 *lp_r1;
-  void (*handler)(u32 addr_pc, u32 op, u32 *regs, u32 addr_check);
-  u32 code[0];
-};
-
-static struct linkpage *g_linkpage;
-static u32 *g_code_ptr;
-static int g_linkpage_count;
-
-static void init_linkpage(void)
-{
-  g_linkpage->lp_r1 = &g_linkpage->saved_regs[1];
-  g_linkpage->handler = handle_op;
-  g_code_ptr = g_linkpage->code;
+  err("unhandled IO op %08x @ %08x\n", op, op_ctx->pc);
 }
 
 static u32 make_offset12(u32 *pc, u32 *target)
@@ -382,24 +587,24 @@ static u32 make_offset12(u32 *pc, u32 *target)
     u = 0;
   }
   if (lp_offs >= LINKPAGE_SIZE) {
-    fprintf(stderr, "linkpage too far: %d\n", lp_offs);
+    err("linkpage too far: %d\n", lp_offs);
     abort();
   }
 
   return (u << 23) | lp_offs;
 }
 
-static u32 make_jmp(u32 *pc, u32 *target)
+static u32 make_jmp(u32 *pc, u32 *target, int bl)
 {
   int jmp_val;
 
   jmp_val = target - pc - 2;
   if (jmp_val < (int)0xff000000 || jmp_val > 0x00ffffff) {
-    fprintf(stderr, "jump out of range (%p -> %p)\n", pc, target);
+    err("jump out of range (%p -> %p)\n", pc, target);
     abort();
   }
 
-  return 0xea000000 | (jmp_val & 0x00ffffff);
+  return 0xea000000 | (bl << 24) | (jmp_val & 0x00ffffff);
 }
 
 static void emit_op(u32 op)
@@ -413,47 +618,70 @@ static void emit_op_io(u32 op, u32 *target)
   emit_op(op);
 }
 
+static void init_linkpage(void)
+{
+  g_linkpage->handler = handle_op;
+  g_linkpage->handler_stack = g_handler_stack_end;
+  g_code_ptr = g_linkpage->code;
+
+  // common_code.
+  // r0 and r14 must be saved by caller, r0 is arg for handle_op
+  // on return everything is restored except lr, which is used to return
+  emit_op_io(0xe50f1000, &g_linkpage->saved_regs[1]);  // str r1, [->saved_regs[1]] @ save r1
+  emit_op   (0xe24f1000 +                              // sub r1, pc, =offs(saved_regs[2])
+    (g_code_ptr - &g_linkpage->saved_regs[2] + 2) * 4);
+  emit_op   (0xe8813ffc);                              // stmia r1, {r2-r13}
+  emit_op_io(0xe51fd000,                               // ldr sp, [->handler_stack]
+    (u32 *)&g_linkpage->handler_stack);
+  emit_op   (0xe2414008);                              // sub r4, r1, #4*2
+  emit_op   (0xe10f1000);                              // mrs r1, cpsr
+  emit_op_io(0xe50f1000, &g_linkpage->cpsr);           // str r1, [->cpsr]
+  emit_op   (0xe1a0500e);                              // mov r5, lr
+  emit_op   (0xe1a0e00f);                              // mov lr, pc
+  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler); // ldr pc, =handle_op
+  emit_op_io(0xe51f1000, &g_linkpage->cpsr);           // ldr r1, [->cpsr]
+  emit_op   (0xe128f001);                              // msr cpsr_f, r1
+  emit_op   (0xe1a0e005);                              // mov lr, r5
+  emit_op   (0xe8943fff);                              // ldmia r4, {r0-r13}
+  emit_op   (0xe12fff1e);                              // bx lr @ return
+}
+
 static void segv_sigaction(int num, siginfo_t *info, void *ctx)
 {
   struct ucontext *context = ctx;
   u32 *regs = (u32 *)&context->uc_mcontext.arm_r0;
   u32 *pc = (u32 *)regs[15];
-  u32 old_op = *pc;
-  u32 *pc_ptr, *old_op_ptr;
+  struct op_context *op_ctx;
   int lp_size;
 
-  if (((regs[15] ^ (u32)&segv_sigaction) & 0xff000000) == 0 ||       // PC is in our segment or
-      (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0)) // .. in linkpage
+  if (((regs[15] ^ (u32)&segv_sigaction) & 0xff000000) == 0 ||         // PC is in our segment or
+      (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0) || // .. in linkpage
+      ((long)info->si_addr & 0xffe00000) != 0x7f000000)                // faulting not where expected
   {
     // real crash - time to die
-    printf("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
+    err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
     signal(num, SIG_DFL);
     raise(num);
   }
   segvlog("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
 
   // spit PC and op
-  pc_ptr = g_code_ptr++;
-  old_op_ptr = g_code_ptr++;
-  *pc_ptr = (u32)pc;
-  *old_op_ptr = old_op;
+  op_ctx = (void *)g_code_ptr;
+  op_ctx->pc = (u32)pc;
+  op_ctx->op = *pc;
+  g_code_ptr = &op_ctx->code[0];
 
   // emit jump to code ptr
-  *pc = make_jmp(pc, g_code_ptr);
+  *pc = make_jmp(pc, g_code_ptr, 0);
 
   // generate code:
-  // TODO: our own stack
-  emit_op_io(0xe50f0000, &g_linkpage->saved_regs[0]);  // str r0, [saved_regs[0]] @ save r0
-  emit_op_io(0xe51f0000, (u32 *)&g_linkpage->lp_r1);   // ldr r0, =lp_r1
-  emit_op   (0xe8807ffe);                              // stmia r0, {r1-r14}
-  emit_op   (0xe2402004);                              // sub r2, r0, #4
-  emit_op_io(0xe51f0000, pc_ptr);                      // ldr r0, =pc
-  emit_op_io(0xe51f1000, old_op_ptr);                  // ldr r1, =old_op
-  emit_op   (0xe1a04002);                              // mov r4, r2
-  emit_op   (0xe1a0e00f);                              // mov lr, pc
-  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler); // ldr pc, =handle_op
-  emit_op   (0xe8947fff);                              // ldmia r4, {r0-r14}
-  emit_op   (make_jmp(g_code_ptr, pc + 1));            // jmp <back>
+  // TODO: multithreading
+  emit_op_io(0xe50f0000, &g_linkpage->saved_regs[0]);            // str r0,  [->saved_regs[0]] @ save r0
+  emit_op_io(0xe50fe000, &g_linkpage->saved_regs[14]);           // str r14, [->saved_regs[14]]
+  emit_op   (0xe24f0000 + (g_code_ptr - (u32 *)op_ctx + 2) * 4); // sub r0, pc, #op_ctx
+  emit_op   (make_jmp(g_code_ptr, &g_linkpage->code[0], 1));     // bl common_code
+  emit_op_io(0xe51fe000, &g_linkpage->saved_regs[14]);           // ldr r14, [->saved_regs[14]]
+  emit_op   (make_jmp(g_code_ptr, pc + 1, 0));                   // jmp <back>
 
   // sync caches
   sys_cacheflush(pc, pc + 1);
@@ -465,7 +693,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   if (lp_size + 13*4 > LINKPAGE_SIZE) {
     g_linkpage_count++;
     if (g_linkpage_count >= LINKPAGE_COUNT) {
-      fprintf(stderr, "too many linkpages needed\n");
+      err("too many linkpages needed\n");
       abort();
     }
     g_linkpage = (void *)((char *)g_linkpage + LINKPAGE_SIZE);
@@ -481,15 +709,28 @@ void emu_init(void *map_bottom)
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
-  void *ret;
+  void *pret;
+  int ret;
 
   sigemptyset(&segv_action.sa_mask);
   sigaction(SIGSEGV, &segv_action, NULL);
 
+  pret = mmap(NULL, HANDLER_STACK_SIZE + 4096, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
+  if (pret == MAP_FAILED) {
+    perror(PFX "mmap handler_stack");
+    exit(1);
+  }
+  ret = mprotect((char *)pret + 4096, HANDLER_STACK_SIZE, PROT_READ | PROT_WRITE);
+  if (ret != 0) {
+    perror(PFX "mprotect handler_stack");
+    exit(1);
+  }
+  g_handler_stack_end = (char *)pret + HANDLER_STACK_SIZE + 4096;
+
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
-  ret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-  if (ret != g_linkpage) {
-    perror("mmap linkpage");
+  pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  if (pret != g_linkpage) {
+    perror(PFX "mmap linkpage");
     exit(1);
   }
   printf("linkpages @ %p\n", g_linkpage);
@@ -498,7 +739,7 @@ void emu_init(void *map_bottom)
   // host stuff
   ret = host_video_init(&host_stride, 0);
   if (ret != 0) {
-    printf("can't alloc screen\n");
+    err("can't alloc screen\n");
     exit(1);
   }
   host_screen = host_video_flip();
@@ -509,7 +750,7 @@ int emu_read_gpiodev(void *buf, int count)
   unsigned int btns;
 
   if (count < 4) {
-    printf("gpiodev read %d?\n", count);
+    err("gpiodev read %d?\n", count);
     return -1;
   }
 
@@ -536,7 +777,7 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
   }
   // upper mem
   if ((offset & 0xfe000000) != 0x02000000)
-    printf("unexpected devmem mmap @ %08x\n", offset);
+    err("unexpected devmem mmap @ %08x\n", offset);
 
   // return mmap(NULL, length, prot, flags, memdev, offset);
 
@@ -561,7 +802,7 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
 
   umem->mem = mmap(NULL, length, prot, MAP_SHARED, fd, 0);
   if (umem->mem == MAP_FAILED) {
-    printf("failed, giving up\n");
+    err("failed, giving up\n");
     close(fd);
     free(umem);
     return MAP_FAILED;

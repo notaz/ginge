@@ -1,5 +1,8 @@
 #include "../common/host_fb.h"
 
+#define PFX "ginge: "
+#define err(f, ...) fprintf(stderr, PFX f, ##__VA_ARGS__)
+
 void do_entry(unsigned long entry, void *stack_frame, int stack_frame_cnt, void *exitf);
 
 void do_patches(void *ptr, unsigned int size);
