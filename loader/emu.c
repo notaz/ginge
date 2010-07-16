@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <alloca.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -10,12 +11,16 @@
 #include <unistd.h>
 #include <signal.h>
 #include <asm/ucontext.h>
+#include <pthread.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/resource.h>
 
 #include "header.h"
 #include "sys_cacheflush.h"
 
 //#define LOG_IO
-//#define LOG_IO_UNH
+//#define LOG_IO_UNK
 //#define LOG_SEGV
 
 #ifdef LOG_IO
@@ -24,7 +29,7 @@
 #define iolog(...)
 #endif
 
-#ifdef LOG_IO_UNH
+#ifdef LOG_IO_UNK
 #define iolog_unh log_io
 #else
 #define iolog_unh(...)
@@ -36,13 +41,16 @@
 #define segvlog(...)
 #endif
 
-#if defined(LOG_IO) || defined(LOG_IO_UNH)
+#if defined(LOG_IO) || defined(LOG_IO_UNK)
 #include "mmsp2-regs.h"
 #endif
 
 typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
+
+static pthread_mutex_t fb_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t fb_cond = PTHREAD_COND_INITIALIZER;
 
 struct uppermem_block {
   u32 addr; // physical
@@ -102,14 +110,14 @@ static u16 *host_screen;
 static int host_stride;
 
 
-#if defined(LOG_IO) || defined(LOG_IO_UNH)
+#if defined(LOG_IO) || defined(LOG_IO_UNK)
 static void log_io(const char *pfx, u32 a, u32 d, int size)
 {
   const char *fmt, *reg = "";
   switch (size) {
-  case  8: fmt = "%s %08x       %02x %s\n"; break;
-  case 32: fmt = "%s %08x %08x %s\n"; break;
-  default: fmt = "%s %08x     %04x %s\n"; break;
+  case  8: fmt = "%s %08x       %02x %s\n"; d &= 0xff; break;
+  case 32: fmt = "%s %08x %08x %s\n";       break;
+  default: fmt = "%s %08x     %04x %s\n";   d &= 0xffff; break;
   }
 
   if ((a & ~0xffff) == 0x7f000000)
@@ -176,19 +184,6 @@ static void *uppermem_lookup(u32 addr, u8 **mem_end)
   return NULL;
 }
 
-static void *blitter_mem_lookup(u32 addr, u8 **mem_end, int *stride_override, int *to_screen)
-{
-  // maybe the screen?
-  if (mmsp2.mlc_stl_adr <= addr && addr < mmsp2.mlc_stl_adr + 320*240*2) {
-    *mem_end = (u8 *)host_screen + host_stride * 240;
-    *stride_override = host_stride;
-    *to_screen = 1;
-    return (u8 *)host_screen + addr - mmsp2.mlc_stl_adr;
-  }
-
-  return uppermem_lookup(addr, mem_end);
-}
-
 static void blitter_do(void)
 {
   u8 *dst, *dste, *src = NULL, *srce = NULL;
@@ -203,9 +198,12 @@ static void blitter_do(void)
 
   // XXX: need to confirm this..
   addr = (blitter.dstaddr & ~3) | ((blitter.dstctrl & 0x1f) >> 3);
-  dst = blitter_mem_lookup(addr, &dste, &dstrd, &to_screen);
-  if (dst == NULL)
-    goto bad_blit;
+
+  // maybe the screen?
+  if (w == 320 && h == 240 && mmsp2.mlc_stl_adr <= addr && addr < mmsp2.mlc_stl_adr + 320*240*2)
+    to_screen = 1;
+
+  dst = uppermem_lookup(addr, &dste);
 
   // XXX: assume fill if no SRCENB, but it could be pattern blit..
   if (blitter.srcctrl & SRCCTRL_SRCENB) {
@@ -213,7 +211,7 @@ static void blitter_do(void)
       goto bad_blit;
 
     addr = (blitter.srcaddr & ~3) | ((blitter.srcctrl & 0x1f) >> 3);
-    src = blitter_mem_lookup(addr, &srce, &sstrd, &to_screen);
+    src = uppermem_lookup(addr, &srce);
     if (src == NULL)
       goto bad_blit;
 
@@ -250,7 +248,7 @@ static void blitter_do(void)
   }
 
   if (to_screen)
-    host_screen = host_video_flip();
+    pthread_cond_signal(&fb_cond);
   return;
 
 bad_blit:
@@ -260,20 +258,11 @@ bad_blit:
 }
 
 // TODO: hw scaler stuff
-static void mlc_flip(u32 addr)
+static void mlc_flip(u8 *src, int bpp)
 {
-  int mode = (mmsp2.mlc_stl_cntl >> 9) & 3;
-  int bpp = mode ? mode * 8 : 4;
   u16 *dst = host_screen;
   u16 *hpal = mmsp2.host_pal;
-  u8 *src, *src_end;
   int i, u;
-
-  src = uppermem_lookup(addr, &src_end);
-  if (src == NULL || src + 320*240 * bpp / 8 > src_end) {
-    err("mlc_flip: %08x is out of range\n", addr);
-    return;
-  }
 
   if (bpp <= 8 && mmsp2.dirty_pal) {
     u32 *srcp = mmsp2.mlc_stl_pallt_d32;
@@ -320,6 +309,79 @@ static void mlc_flip(u32 addr)
   host_screen = host_video_flip();
 }
 
+#define ts_add_nsec(ts, ns) { \
+  ts.tv_nsec += ns; \
+  if (ts.tv_nsec >= 1000000000) { \
+    ts.tv_sec++; \
+    ts.tv_nsec -= 1000000000; \
+  } \
+}
+
+static void *fb_sync_thread(void *arg)
+{
+  int invalid_fb_addr = 1;
+  int manual_refresh = 0;
+  struct timespec ts;
+  int ret, wait_ret;
+
+  //ret = pthread_setschedprio(pthread_self(), -1);
+  //log("pthread_setschedprio %d\n", ret);
+  //ret = setpriority(PRIO_PROCESS, 0, -1);
+  //log("setpriority %d\n", ret);
+
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  if (ret != 0) {
+    perror(PFX "clock_gettime");
+    exit(1);
+  }
+
+  while (1) {
+    u8 *gp2x_fb, *gp2x_fb_end;
+    int mode, bpp;
+
+    ret =  pthread_mutex_lock(&fb_mutex);
+    wait_ret = pthread_cond_timedwait(&fb_cond, &fb_mutex, &ts);
+    ret |= pthread_mutex_unlock(&fb_mutex);
+    if (ret != 0) {
+      err("fb_thread: mutex error: %d\n", ret);
+      sleep(1);
+      continue;
+    }
+    if (wait_ret != 0 && wait_ret != ETIMEDOUT) {
+      err("fb_thread: cond error: %d\n", wait_ret);
+      sleep(1);
+      continue;
+    }
+
+    if (wait_ret != ETIMEDOUT) {
+      clock_gettime(CLOCK_REALTIME, &ts);
+      ts_add_nsec(ts, 50000000);
+      manual_refresh++;
+      if (manual_refresh == 2)
+        log("fb_thread: switch to manual refresh\n");
+    } else {
+      ts_add_nsec(ts, 16666667);
+      if (manual_refresh > 1)
+        log("fb_thread: switch to auto refresh\n");
+      manual_refresh = 0;
+    }
+
+    mode = (mmsp2.mlc_stl_cntl >> 9) & 3;
+    bpp = mode ? mode * 8 : 4;
+
+    gp2x_fb = uppermem_lookup(mmsp2.mlc_stl_adr, &gp2x_fb_end);
+    if (gp2x_fb == NULL || gp2x_fb + 320*240 * bpp / 8 > gp2x_fb_end) {
+      if (!invalid_fb_addr) {
+        err("fb_thread: %08x is out of range\n", mmsp2.mlc_stl_adr);
+        invalid_fb_addr = 1;
+      }
+      continue;
+    }
+
+    mlc_flip(gp2x_fb, bpp);
+  }
+}
+
 static u32 xread8(u32 a)
 {
   iolog("r8 ", a, 0, 8);
@@ -360,8 +422,25 @@ static u32 xread16(u32 a)
       d = ~mmsp2.btn_state & 0xff;
       d |= 0x01aa;
       break;
+    case 0x1836: // reserved
+      d = 0x2330;
+      break;
+    case 0x2816: // DPC_X_MAX
+      d = 319;
+      break;
+    case 0x2818: // DPC_Y_MAX
+      d = 239;
+      break;
     case 0x28da:
       d = mmsp2.mlc_stl_cntl;
+      break;
+    case 0x290e:
+    case 0x2912:
+      d = mmsp2.mlc_stl_adrl;
+      break;
+    case 0x2910:
+    case 0x2914:
+      d = mmsp2.mlc_stl_adrh;
       break;
     case 0x2958:
       d = mmsp2.mlc_stl_pallt_a;
@@ -431,7 +510,8 @@ static void xwrite16(u32 a, u32 d)
     case 0x2914:
       mmsp2.mlc_stl_adrh = d;
       if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr)
-        mlc_flip(mmsp2.mlc_stl_adr);
+        // ask for refresh
+        pthread_cond_signal(&fb_cond);
       mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
       return;
     case 0x2958:
@@ -486,7 +566,6 @@ static struct linkpage *g_linkpage;
 static u32 *g_code_ptr;
 static int g_linkpage_count;
 
-#define HANDLER_STACK_SIZE 4096
 static void *g_handler_stack_end;
 
 #define BIT_SET(v, b) (v & (1 << (b)))
@@ -662,6 +741,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
     err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
     signal(num, SIG_DFL);
     raise(num);
+    return;
   }
   segvlog("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
 
@@ -709,23 +789,14 @@ void emu_init(void *map_bottom)
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
+  pthread_t tid;
   void *pret;
   int ret;
 
-  sigemptyset(&segv_action.sa_mask);
-  sigaction(SIGSEGV, &segv_action, NULL);
-
-  pret = mmap(NULL, HANDLER_STACK_SIZE + 4096, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
-  if (pret == MAP_FAILED) {
-    perror(PFX "mmap handler_stack");
-    exit(1);
-  }
-  ret = mprotect((char *)pret + 4096, HANDLER_STACK_SIZE, PROT_READ | PROT_WRITE);
-  if (ret != 0) {
-    perror(PFX "mprotect handler_stack");
-    exit(1);
-  }
-  g_handler_stack_end = (char *)pret + HANDLER_STACK_SIZE + 4096;
+  g_handler_stack_end = (void *)((long)alloca(1536 * 1024) & ~0xffff);
+  log("handler stack @ %p (current %p)\n", g_handler_stack_end, &ret);
+  // touch it now. If we crash now we'll know why
+  *((char *)g_handler_stack_end - 4096) = 1;
 
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
   pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
@@ -733,7 +804,7 @@ void emu_init(void *map_bottom)
     perror(PFX "mmap linkpage");
     exit(1);
   }
-  printf("linkpages @ %p\n", g_linkpage);
+  log("linkpages @ %p\n", g_linkpage);
   init_linkpage();
 
   // host stuff
@@ -743,6 +814,19 @@ void emu_init(void *map_bottom)
     exit(1);
   }
   host_screen = host_video_flip();
+
+  ret = pthread_create(&tid, NULL, fb_sync_thread, NULL);
+  if (ret != 0) {
+    err("failed to create fb_sync_thread: %d\n", ret);
+    exit(1);
+  }
+  pthread_detach(tid);
+
+  // mmsp2 defaults
+  mmsp2.mlc_stl_adr = 0x03101000; // fb2 is at 0x03381000
+
+  sigemptyset(&segv_action.sa_mask);
+  sigaction(SIGSEGV, &segv_action, NULL);
 }
 
 int emu_read_gpiodev(void *buf, int count)
@@ -779,11 +863,9 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
   if ((offset & 0xfe000000) != 0x02000000)
     err("unexpected devmem mmap @ %08x\n", offset);
 
-  // return mmap(NULL, length, prot, flags, memdev, offset);
-
   umem = calloc(1, sizeof(*umem));
   if (umem == NULL) {
-    printf("OOM\n");
+    err("OOM\n");
     return MAP_FAILED;
   }
 
@@ -793,7 +875,7 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
   if (umem->mem != MAP_FAILED)
     goto done;
 
-  printf("upper mem @ %08x %d mmap fail, trying backing file\n", offset, length);
+  log("upper mem @ %08x %d mmap fail, trying backing file\n", offset, length);
   sprintf(name, "m%08x", offset);
   fd = open(name, O_CREAT|O_RDWR, 0644);
   lseek(fd, length - 1, SEEK_SET);
@@ -809,7 +891,7 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
   }
 
 done:
-  printf("upper mem @ %08x %d\n", offset, length);
+  log("upper mem @ %08x %d\n", offset, length);
   umem->next = upper_mem;
   upper_mem = umem;
   return umem->mem;

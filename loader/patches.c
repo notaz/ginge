@@ -11,6 +11,7 @@
 #include "sys_cacheflush.h"
 
 #define strace(...)
+//#define strace printf
 
 static const unsigned int sig_open[] = {
   0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900005
@@ -29,17 +30,39 @@ static const unsigned int sig_read[] = {
   0xe59fc080, 0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900003
 };
 
-#define FAKE_DEVMEM_DEVICE      10001
-#define FAKE_DEVGPIO_DEVICE     10002
+enum {
+  FAKEDEV_MEM = 10001,
+  FAKEDEV_GPIO,
+  FAKEDEV_FB0,
+  FAKEDEV_FB1,
+  FAKEDEV_MMUHACK,
+};
+
+static const struct {
+  const char *name;
+  int fd;
+} takeover_devs[] = {
+  { "/dev/mem",     FAKEDEV_MEM },
+  { "/dev/GPIO",    FAKEDEV_GPIO },
+  { "/dev/fb0",     FAKEDEV_FB0 },
+  { "/dev/fb/0",    FAKEDEV_FB0 },
+  { "/dev/fb1",     FAKEDEV_FB1 },
+  { "/dev/fb/1",    FAKEDEV_FB1 },
+  { "/dev/mmuhack", FAKEDEV_MMUHACK },
+};
 
 static int w_open(const char *pathname, int flags, mode_t mode)
 {
-  int ret;
-  if      (strcmp(pathname, "/dev/mem") == 0)
-    ret = FAKE_DEVMEM_DEVICE;
-  else if (strcmp(pathname, "/dev/GPIO") == 0)
-    ret = FAKE_DEVGPIO_DEVICE;
-  else
+  int i, ret;
+
+  for (i = 0; i < ARRAY_SIZE(takeover_devs); i++) {
+    if (strcmp(pathname, takeover_devs[i].name) == 0) {
+      ret = takeover_devs[i].fd;
+      break;
+    }
+  }
+
+  if (i == ARRAY_SIZE(takeover_devs))
     ret = open(pathname, flags, mode);
 
   strace("open(%s) = %d\n", pathname, ret);
@@ -49,12 +72,15 @@ static int w_open(const char *pathname, int flags, mode_t mode)
 static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
   void *ret;
-  if (fd != FAKE_DEVMEM_DEVICE)
+  if (fd != FAKEDEV_MEM)
     ret = mmap(addr, length, prot, flags, fd, offset);
   else
     ret = emu_mmap_dev(length, prot, flags, offset);
 
-  strace("mmap(%p, %x, %x, %x, %d, %lx) = %p\n", addr, length, prot, flags, fd, (long)offset, ret);
+  // threads are using heap before they mmap their stack
+  // printf needs valid stack for pthtead/errno
+  if (((long)&ret & 0xf0000000) == 0xb0000000)
+    strace("mmap(%p, %x, %x, %x, %d, %lx) = %p\n", addr, length, prot, flags, fd, (long)offset, ret);
   return ret;
 }
 #define w_mmap_ w_mmap
@@ -62,7 +88,7 @@ static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_
 ssize_t w_read(int fd, void *buf, size_t count)
 {
   ssize_t ret;
-  if (fd != FAKE_DEVGPIO_DEVICE)
+  if (fd != FAKEDEV_GPIO)
     return read(fd, buf, count);
 
   ret = emu_read_gpiodev(buf, count);

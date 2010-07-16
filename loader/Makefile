@@ -3,7 +3,7 @@ CROSS_COMPILE ?= arm-linux-
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 CFLAGS += -Wall -ggdb
-LDFLAGS += -static -ggdb
+LDFLAGS += -static -ggdb -lpthread -lrt
 ifndef DEBUG
 CFLAGS += -O2 -fno-strict-aliasing
 LDFLAGS += -s -O2
@@ -22,12 +22,13 @@ endif
 
 vpath %.c = ../common/
 
+TARGET = ginge_sloader
 OBJ += loader.o loader_$(ARCH).o patches.o emu.o host_fb.o host_pnd.o
 
-ginge_sloader: LDFLAGS += -Wl,-T script_$(ARCH).lds
+$(TARGET): LDFLAGS += -Wl,-T script_$(ARCH).lds
 
-ginge_sloader: $(OBJ)
+$(TARGET): $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 clean:
-	$(RM) loader $(OBJ)
+	$(RM) $(TARGET) $(OBJ)

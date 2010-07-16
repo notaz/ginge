@@ -380,6 +380,8 @@ static const char * const regnames[0x10000] = {
 [0x2848]	= "DPC_CLKCNTL",
 
 /* MLC */
+[0X2880]	= "MLC_OVLAY_CNTR",
+[0X2882]	= "MLC_YUV_EFECT",
 [0X2884]	= "MLC_YUV_CNTL",
 [0X2886]	= "MLC_YUVA_TP_HSC",
 [0X2888]	= "MLC_YUVA_BT_HSC",
