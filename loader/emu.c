@@ -103,7 +103,7 @@ static struct {
   u16 host_pal[256];
   u32 old_mlc_stl_adr;
   u32 btn_state; // as seen through /dev/GPIO
-  u16 dirty_pal:1;
+  u32 dirty_pal:1;
 } mmsp2;
 
 static u16 *host_screen;
@@ -189,7 +189,7 @@ static void blitter_do(void)
   u8 *dst, *dste, *src = NULL, *srce = NULL;
   int w, h, sstrd, dstrd;
   int to_screen = 0;
-  u32 addr;
+  u32 bpp, addr;
 
   w = blitter.size & 0x7ff;
   h = (blitter.size >> 16) & 0x7ff;
@@ -199,8 +199,13 @@ static void blitter_do(void)
   // XXX: need to confirm this..
   addr = (blitter.dstaddr & ~3) | ((blitter.dstctrl & 0x1f) >> 3);
 
+  // use dst bpp.. How does it do blits with different src bpp?
+  bpp = (blitter.dstctrl & 0x20) ? 16 : 8;
+
   // maybe the screen?
-  if (w == 320 && h == 240 && mmsp2.mlc_stl_adr <= addr && addr < mmsp2.mlc_stl_adr + 320*240*2)
+  if (((w == 320 && h == 240) || // blit whole screen
+       (w * h >= 320*240/2)) &&  // ..or at least half of the area
+       mmsp2.mlc_stl_adr <= addr && addr < mmsp2.mlc_stl_adr + 320*240*2)
     to_screen = 1;
 
   dst = uppermem_lookup(addr, &dste);
@@ -222,6 +227,9 @@ static void blitter_do(void)
     }
   }
 
+  if (dst == NULL)
+    goto bad_blit;
+
   if (dst + dstrd * h > dste) {
     err("blit %08x->%08x %dx%d did not fit dst\n",
       blitter.srcaddr, blitter.dstaddr, w, h);
@@ -230,21 +238,27 @@ static void blitter_do(void)
 
   if (src != NULL) {
     // copy
-    if (blitter.ctrl & CTRL_TRANSPARENCYENB) {
+    if (bpp == 16 && (blitter.ctrl & CTRL_TRANSPARENCYENB)) {
       u32 trc = blitter.ctrl >> 16;
       for (; h > 0; h--, dst += dstrd, src += sstrd)
         blt_tr(dst, src, trc, w);
     }
     else {
       for (; h > 0; h--, dst += dstrd, src += sstrd)
-        memcpy(dst, src, w * 2);
+        memcpy(dst, src, w * bpp / 8);
     }
   }
   else {
     // fill. Assume the pattern is cleared and bg color is used
     u32 bgc = blitter.patbackcolor & 0xffff;
-    for (; h > 0; h--, dst += dstrd)
-      memset16(dst, bgc, w);
+    if (bpp == 16) {
+      for (; h > 0; h--, dst += dstrd)
+        memset16(dst, bgc, w);
+    }
+    else {
+      for (; h > 0; h--, dst += dstrd)
+        memset(dst, bgc, w); // bgc?
+    }
   }
 
   if (to_screen)
@@ -342,6 +356,7 @@ static void *fb_sync_thread(void *arg)
     ret =  pthread_mutex_lock(&fb_mutex);
     wait_ret = pthread_cond_timedwait(&fb_cond, &fb_mutex, &ts);
     ret |= pthread_mutex_unlock(&fb_mutex);
+
     if (ret != 0) {
       err("fb_thread: mutex error: %d\n", ret);
       sleep(1);
@@ -468,6 +483,14 @@ out:
 static u32 xread32(u32 a)
 {
   u32 d = 0;
+  if ((a & 0xfff00000) == 0x7f000000) {
+    u32 a_ = a & 0xffff;
+    switch (a_) {
+    case 0x0a00: // TCOUNT, 1/7372800s
+      // TODO
+      break;
+    }
+  }
   if ((a & 0xfff00000) == 0x7f100000) {
     u32 *bl = &blitter.dstctrl;
     u32 a_ = a & 0xfff;
@@ -843,7 +866,12 @@ int emu_read_gpiodev(void *buf, int count)
   return 4;
 }
 
-void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
+struct dev_fd_t emu_interesting_fds[] = {
+  [IFD_SOUND] = { "/dev/dsp", -1 },
+  { NULL, 0 },
+};
+
+static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
   struct uppermem_block *umem;
   char name[32];
@@ -887,6 +915,7 @@ void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset
     err("failed, giving up\n");
     close(fd);
     free(umem);
+    errno = EINVAL;
     return MAP_FAILED;
   }
 
@@ -895,5 +924,113 @@ done:
   umem->next = upper_mem;
   upper_mem = umem;
   return umem->mem;
+}
+
+void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset)
+{
+  if (fd == FAKEDEV_MEM)
+    return emu_mmap_dev(length, prot, flags, offset);
+
+  if (fd == FAKEDEV_FB0)
+    return emu_mmap_dev(length, prot, flags, offset + 0x03101000);
+
+  if (fd == FAKEDEV_FB1)
+    return emu_mmap_dev(length, prot, flags, offset + 0x03381000);
+
+  err("bad/ni mmap(?, %d, %x, %x, %d, %08x)", length, prot, flags, fd, offset);
+  errno = EINVAL;
+  return MAP_FAILED;
+}
+
+#include <sys/ioctl.h>
+#include <linux/soundcard.h>
+
+static int emu_sound_ioctl(int fd, int request, void *argp)
+{
+  int *arg = argp;
+
+#if 0
+  dbg("snd ioctl(%d, %08x, %p)", fd, request, argp);
+  if (arg != NULL)
+    dbg_c(" [%d]", *arg);
+  dbg_c("\n");
+#endif
+
+  /* People set strange frag settings on GP2X, which even manage
+   * to break audio on pandora (causes writes to fail).
+   * Catch this and set to something that works. */
+  if (request == SNDCTL_DSP_SPEED) {
+    int ret, bsize, frag;
+
+    // ~4ms. gpSP wants small buffers or else it stutters
+    // because of it's audio thread sync stuff
+    bsize = *arg / 250 * 4;
+    for (frag = 0; bsize; bsize >>= 1, frag++)
+      ;
+
+    frag |= 16 << 16;       // fragment count
+    ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
+    if (ret != 0) {
+      err("snd ioctl SETFRAGMENT %08x: ", frag);
+      perror(NULL);
+    }
+  }
+  else if (request == SNDCTL_DSP_SETFRAGMENT)
+    return 0;
+
+  return ioctl(fd, request, argp);
+}
+
+#include <linux/fb.h>
+
+int emu_do_ioctl(int fd, int request, void *argp)
+{
+  if (fd == emu_interesting_fds[IFD_SOUND].fd)
+    return emu_sound_ioctl(fd, request, argp);
+
+  if (argp == NULL)
+    goto fail;
+
+  if (fd == FAKEDEV_FB0 || fd == FAKEDEV_FB1) {
+    switch (request) {
+      case FBIOGET_FSCREENINFO: {
+        struct fb_fix_screeninfo *fix = argp;
+
+        memset(fix, 0, sizeof(*fix));
+        strcpy(fix->id, "mmsp2_RGB0");
+        fix->type         = FB_TYPE_PACKED_PIXELS;
+        fix->accel        = FB_ACCEL_NONE;
+        fix->smem_start   = (fd == FAKEDEV_FB0) ? 0x03101000 : 0x03381000;
+        fix->smem_len     = 320*240*2;
+        return 0;
+      }
+      case FBIOGET_VSCREENINFO: {
+        struct fb_var_screeninfo *var = argp;
+        static const struct fb_bitfield fbb_red   = { offset: 0,  length: 4, };
+        static const struct fb_bitfield fbb_green = { offset: 0,  length: 4, };
+        static const struct fb_bitfield fbb_blue  = { offset: 0,  length: 4, };
+
+        memset(var, 0, sizeof(*var));
+        var->activate     = FB_ACTIVATE_NOW;
+        var->xres         =
+        var->xres_virtual = 320;
+        var->yres         =
+        var->yres_virtual = 240;
+        var->width        =
+        var->height       = -1;
+        var->vmode        = FB_VMODE_NONINTERLACED;
+        var->bits_per_pixel = 16;
+        var->red          = fbb_red;
+        var->green        = fbb_green;
+        var->blue         = fbb_blue;
+        return 0;
+      }
+    }
+  }
+
+fail:
+  err("bad/ni ioctl(%d, %08x, %p)", fd, request, argp);
+  errno = EINVAL;
+  return -1;
 }
 

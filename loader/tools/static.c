@@ -4,6 +4,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <signal.h>
 
 int main(int argc, char *argv[])
 {
@@ -23,6 +25,8 @@ int main(int argc, char *argv[])
 	}
 
 	memregs = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE, MAP_SHARED, memdev, 0xc0000000);
+	ioctl(-1, 0);
+	signal(7, SIG_DFL);
 
 	for (i = 0; i < 2; i++)
 		printf("%02x %04x %08x\n", ((char *)memregs)[0x2011],
