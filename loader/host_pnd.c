@@ -11,6 +11,7 @@
 #include <linux/input.h>
 
 #include "header.h"
+#include "realfuncs.h"
 
 static int ifds[2] = { -1, -1 };
 static int init_done;
@@ -23,7 +24,7 @@ static void init(void)
 
   for (ifd = -1, i = 0; ifds[0] == -1 || ifds[1] == -1; i++) {
     snprintf(buff, sizeof(buff), "/dev/input/event%i", i);
-    ifd = open(buff, O_RDONLY | O_NONBLOCK);
+    ifd = open(buff, O_RDONLY | O_NONBLOCK, 0);
     if (ifd == -1)
       break;
 

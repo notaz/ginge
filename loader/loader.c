@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 
 #include "header.h"
+#include "realfuncs.h"
 
 #define CHECK_(val, fail_operator, expect, err_msg) \
   if (val fail_operator expect) { \
@@ -73,7 +74,7 @@ int main(int argc, char *argv[])
 
   for (i = 0; i < ARRAY_SIZE(maps); i++) {
     ret = fscanf(fi, "%lx-%lx %*s %*s %*s %*s %*s\n", &maps[i].start, &maps[i].end);
-    if (ret == 0)
+    if (ret <= 0)
       break;
     CHECK_EQ(ret, 2, "maps parse error");
   }

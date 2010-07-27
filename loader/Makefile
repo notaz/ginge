@@ -2,11 +2,14 @@ ARCH ?= arm
 CROSS_COMPILE ?= arm-linux-
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
-CFLAGS += -Wall -ggdb
-LDFLAGS += -static -ggdb -lpthread -lrt
+CFLAGS += -Wall -ggdb -DLOADER
+LDFLAGS += -ggdb -lpthread -lrt
 ifndef DEBUG
 CFLAGS += -O2 -fno-strict-aliasing
 LDFLAGS += -s -O2
+endif
+ifdef DBG
+CFLAGS += -DDBG=$(DBG)
 endif
 
 ifeq "$(ARCH)" "ia32"
@@ -22,13 +25,28 @@ endif
 
 vpath %.c = ../common/
 
-TARGET = ginge_sloader
-OBJ += loader.o loader_$(ARCH).o patches.o emu.o host_fb.o host_pnd.o
+TARGET_S = ginge_sloader
+TARGET_D = ginge_dyn
 
-$(TARGET): LDFLAGS += -Wl,-T script_$(ARCH).lds
+OBJ += emu.o host_fb.o host_pnd.o cmn.o
+OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
+OBJ_D += $(OBJ) dl.o
 
-$(TARGET): $(OBJ)
-	$(CC) -o $@ $^ $(LDFLAGS)
+all: $(TARGET_S) $(TARGET_D)
+
+$(TARGET_S): LDFLAGS += -Wl,-T script_$(ARCH).lds
+$(TARGET_D): LDFLAGS += -ldl
+
+$(TARGET_S): $(OBJ_S)
+	$(CC) -o $@ $^ -static $(LDFLAGS)
+
+$(TARGET_D): $(OBJ_D)
+	$(CC) -o $@ $^ -shared $(LDFLAGS)
 
 clean:
-	$(RM) $(TARGET) $(OBJ)
+	$(RM) $(TARGET_S) $(TARGET_D) $(OBJ_S) $(OBJ_D)
+
+# basic deps
+dl.o patches.o: override.c
+*.o: header.h
+

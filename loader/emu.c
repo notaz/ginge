@@ -15,12 +15,22 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <sys/ioctl.h>
+#include <linux/soundcard.h>
+#include <linux/fb.h>
 
 #include "header.h"
+#include "../common/host_fb.h"
+#include "../common/cmn.h"
 #include "sys_cacheflush.h"
+#include "realfuncs.h"
 
-//#define LOG_IO
-//#define LOG_IO_UNK
+#if (dbg & 2)
+#define LOG_IO_UNK
+#endif
+#if (dbg & 4)
+#define LOG_IO
+#endif
 //#define LOG_SEGV
 
 #ifdef LOG_IO
@@ -754,7 +764,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   u32 *regs = (u32 *)&context->uc_mcontext.arm_r0;
   u32 *pc = (u32 *)regs[15];
   struct op_context *op_ctx;
-  int lp_size;
+  int i, lp_size;
 
   if (((regs[15] ^ (u32)&segv_sigaction) & 0xff000000) == 0 ||         // PC is in our segment or
       (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0) || // .. in linkpage
@@ -762,6 +772,8 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   {
     // real crash - time to die
     err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
+    for (i = 0; i < 8; i++)
+      err(" r%d=%08x r%2d=%08x\n", i, regs[i], i+8, regs[i+8]);
     signal(num, SIG_DFL);
     raise(num);
     return;
@@ -808,7 +820,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
 
 void emu_init(void *map_bottom)
 {
-  struct sigaction segv_action = {
+  sigaction_t segv_action = {
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
@@ -822,7 +834,8 @@ void emu_init(void *map_bottom)
   *((char *)g_handler_stack_end - 4096) = 1;
 
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
-  pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
+              MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
   if (pret != g_linkpage) {
     perror(PFX "mmap linkpage");
     exit(1);
@@ -833,7 +846,7 @@ void emu_init(void *map_bottom)
   // host stuff
   ret = host_video_init(&host_stride, 0);
   if (ret != 0) {
-    err("can't alloc screen\n");
+    err("can't init video\n");
     exit(1);
   }
   host_screen = host_video_flip();
@@ -847,6 +860,7 @@ void emu_init(void *map_bottom)
 
   // mmsp2 defaults
   mmsp2.mlc_stl_adr = 0x03101000; // fb2 is at 0x03381000
+  mmsp2.mlc_stl_cntl = 0x4ab; // 16bpp, region 1 active
 
   sigemptyset(&segv_action.sa_mask);
   sigaction(SIGSEGV, &segv_action, NULL);
@@ -937,13 +951,10 @@ void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int
   if (fd == FAKEDEV_FB1)
     return emu_mmap_dev(length, prot, flags, offset + 0x03381000);
 
-  err("bad/ni mmap(?, %d, %x, %x, %d, %08x)", length, prot, flags, fd, offset);
+  err("bad/ni mmap(?, %d, %x, %x, %d, %08x)\n", length, prot, flags, fd, offset);
   errno = EINVAL;
   return MAP_FAILED;
 }
-
-#include <sys/ioctl.h>
-#include <linux/soundcard.h>
 
 static int emu_sound_ioctl(int fd, int request, void *argp)
 {
@@ -981,17 +992,18 @@ static int emu_sound_ioctl(int fd, int request, void *argp)
   return ioctl(fd, request, argp);
 }
 
-#include <linux/fb.h>
-
 int emu_do_ioctl(int fd, int request, void *argp)
 {
   if (fd == emu_interesting_fds[IFD_SOUND].fd)
     return emu_sound_ioctl(fd, request, argp);
 
-  if (argp == NULL)
-    goto fail;
+  switch (fd) {
+  /* *********************** */
+  case FAKEDEV_FB0:
+  case FAKEDEV_FB1:
+    if (argp == NULL)
+      goto fail;
 
-  if (fd == FAKEDEV_FB0 || fd == FAKEDEV_FB1) {
     switch (request) {
       case FBIOGET_FSCREENINFO: {
         struct fb_fix_screeninfo *fix = argp;
@@ -1000,15 +1012,17 @@ int emu_do_ioctl(int fd, int request, void *argp)
         strcpy(fix->id, "mmsp2_RGB0");
         fix->type         = FB_TYPE_PACKED_PIXELS;
         fix->accel        = FB_ACCEL_NONE;
+        fix->visual       = FB_VISUAL_TRUECOLOR;
+        fix->line_length  = 320*2;
         fix->smem_start   = (fd == FAKEDEV_FB0) ? 0x03101000 : 0x03381000;
         fix->smem_len     = 320*240*2;
         return 0;
       }
       case FBIOGET_VSCREENINFO: {
         struct fb_var_screeninfo *var = argp;
-        static const struct fb_bitfield fbb_red   = { offset: 0,  length: 4, };
-        static const struct fb_bitfield fbb_green = { offset: 0,  length: 4, };
-        static const struct fb_bitfield fbb_blue  = { offset: 0,  length: 4, };
+        static const struct fb_bitfield fbb_red   = { offset: 11, length: 5, };
+        static const struct fb_bitfield fbb_green = { offset:  5, length: 6, };
+        static const struct fb_bitfield fbb_blue  = { offset:  0, length: 5, };
 
         memset(var, 0, sizeof(*var));
         var->activate     = FB_ACTIVATE_NOW;
@@ -1025,12 +1039,79 @@ int emu_do_ioctl(int fd, int request, void *argp)
         var->blue         = fbb_blue;
         return 0;
       }
+      case FBIOPUT_VSCREENINFO: {
+        struct fb_var_screeninfo *var = argp;
+        dbg(" put vscreen: %dx%d@%d\n", var->xres, var->yres, var->bits_per_pixel);
+        if (var->xres != 320 || var->yres != 240 || var->bits_per_pixel != 16)
+          return -1;
+        return 0;
+      }
     }
+
+  /* *********************** */
+  case FAKEDEV_TTY0:
+    // fake tty0 to make GPH SDL happy
+    if (request == 0x4b46) // KDGKBENT
+      return -1;
+    return 0;
   }
 
 fail:
-  err("bad/ni ioctl(%d, %08x, %p)", fd, request, argp);
+  err("bad/ni ioctl(%d, %08x, %p)\n", fd, request, argp);
   errno = EINVAL;
   return -1;
+}
+
+static const struct {
+  const char *from;
+  const char *to;
+} path_map[] = {
+  { "/mnt/tmp/", "/tmp/" },
+};
+
+// FIXME: threads..
+static const char *wrap_path(const char *path)
+{
+  static char tmp_path[512];
+  int i, len;
+
+  // do only path mapping for now
+  for (i = 0; i < ARRAY_SIZE(path_map); i++) {
+    len = strlen(path_map[i].from);
+    if (strncmp(path, path_map[i].from, len) == 0) {
+      snprintf(tmp_path, sizeof(tmp_path), "%s%s", path_map[i].to, path + len);
+      dbg("mapped path \"%s\" -> \"%s\"\n", path, tmp_path);
+      return tmp_path;
+    }
+  }
+
+  return path;
+}
+
+void *emu_do_fopen(const char *path, const char *mode)
+{
+  return fopen(wrap_path(path), mode);
+}
+
+int emu_do_system(const char *command)
+{
+  static char tmp_path[512];
+  char *p, *p2;
+
+  if (command == NULL)
+    return -1;
+
+  // pass through stuff in PATH
+  p = strchr(command, ' ');
+  p2 = strchr(command, '/');
+  if (p2 == NULL || (p != NULL && p2 > p))
+    return system(command);
+
+  make_local_path(tmp_path, sizeof(tmp_path), "ginge_prep");
+  p = tmp_path + strlen(tmp_path);
+
+  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " %s", wrap_path(command));
+  dbg("system: \"%s\"\n", tmp_path);
+  return system(tmp_path);
 }
 
