@@ -25,10 +25,10 @@
 #include "sys_cacheflush.h"
 #include "realfuncs.h"
 
-#if (dbg & 2)
+#if (DBG & 2) && !(DBG & 4)
 #define LOG_IO_UNK
 #endif
-#if (dbg & 4)
+#if (DBG & 4)
 #define LOG_IO
 #endif
 //#define LOG_SEGV
@@ -55,21 +55,13 @@
 #include "mmsp2-regs.h"
 #endif
 
+typedef unsigned long long u64;
 typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
 
 static pthread_mutex_t fb_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t fb_cond = PTHREAD_COND_INITIALIZER;
-
-struct uppermem_block {
-  u32 addr; // physical
-  u32 size;
-  void *mem;
-  struct uppermem_block *next;
-};
-
-static struct uppermem_block *upper_mem;
 
 static struct {
   u32 dstctrl;
@@ -110,6 +102,7 @@ static struct {
   };
 
   // state
+  void *umem;
   u16 host_pal[256];
   u32 old_mlc_stl_adr;
   u32 btn_state; // as seen through /dev/GPIO
@@ -182,16 +175,12 @@ static void blt_tr(void *dst, void *src, u32 trc, int w)
 
 static void *uppermem_lookup(u32 addr, u8 **mem_end)
 {
-  struct uppermem_block *ub;
+  // XXX: maybe support mirroring?
+  if ((addr & 0xfe000000) != 0x02000000)
+    return NULL;
 
-  for (ub = upper_mem; ub != NULL; ub = ub->next) {
-    if (ub->addr <= addr && addr < ub->addr + ub->size) {
-      *mem_end = (u8 *)ub->mem + ub->size;
-      return (u8 *)ub->mem + addr - ub->addr;
-    }
-  }
-
-  return NULL;
+  *mem_end = (u8 *)mmsp2.umem + 0x02000000;
+  return (u8 *)mmsp2.umem - 0x02000000 + addr;
 }
 
 static void blitter_do(void)
@@ -495,9 +484,16 @@ static u32 xread32(u32 a)
   u32 d = 0;
   if ((a & 0xfff00000) == 0x7f000000) {
     u32 a_ = a & 0xffff;
+    struct timespec ts;
+    u64 t64;
+
     switch (a_) {
     case 0x0a00: // TCOUNT, 1/7372800s
-      // TODO
+      clock_gettime(CLOCK_REALTIME, &ts);
+      t64 = (u64)ts.tv_sec * 1000000000 + ts.tv_nsec;
+      // t * 7372800.0 / 1000000000 * 0x100000000 ~= t * 31665935
+      t64 *= 31665935;
+      d = t64 >> 32;
       break;
     }
   }
@@ -587,25 +583,25 @@ struct op_context {
   u32 code[0];
 };
 
-struct linkpage {
-  u32 saved_regs[15];
-  u32 cpsr;
-  u32 *handler_stack;
+struct op_linkpage {
   void (*handler)(struct op_context *op_ctx);
   u32 code[0];
 };
 
-static struct linkpage *g_linkpage;
+struct op_stackframe {
+  u32 saved_regs[15];
+  u32 cpsr;
+};
+
+static struct op_linkpage *g_linkpage;
 static u32 *g_code_ptr;
 static int g_linkpage_count;
 
-static void *g_handler_stack_end;
-
 #define BIT_SET(v, b) (v & (1 << (b)))
 
-static void handle_op(struct op_context *op_ctx)
+void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
 {
-  u32 *regs = g_linkpage->saved_regs;
+  u32 *regs = sframe->saved_regs;
   u32 op = op_ctx->op;
   u32 t, shift, ret, addr;
   int rn, rd;
@@ -732,30 +728,8 @@ static void emit_op_io(u32 op, u32 *target)
 
 static void init_linkpage(void)
 {
-  g_linkpage->handler = handle_op;
-  g_linkpage->handler_stack = g_handler_stack_end;
+  g_linkpage->handler = emu_call_handle_op;
   g_code_ptr = g_linkpage->code;
-
-  // common_code.
-  // r0 and r14 must be saved by caller, r0 is arg for handle_op
-  // on return everything is restored except lr, which is used to return
-  emit_op_io(0xe50f1000, &g_linkpage->saved_regs[1]);  // str r1, [->saved_regs[1]] @ save r1
-  emit_op   (0xe24f1000 +                              // sub r1, pc, =offs(saved_regs[2])
-    (g_code_ptr - &g_linkpage->saved_regs[2] + 2) * 4);
-  emit_op   (0xe8813ffc);                              // stmia r1, {r2-r13}
-  emit_op_io(0xe51fd000,                               // ldr sp, [->handler_stack]
-    (u32 *)&g_linkpage->handler_stack);
-  emit_op   (0xe2414008);                              // sub r4, r1, #4*2
-  emit_op   (0xe10f1000);                              // mrs r1, cpsr
-  emit_op_io(0xe50f1000, &g_linkpage->cpsr);           // str r1, [->cpsr]
-  emit_op   (0xe1a0500e);                              // mov r5, lr
-  emit_op   (0xe1a0e00f);                              // mov lr, pc
-  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler); // ldr pc, =handle_op
-  emit_op_io(0xe51f1000, &g_linkpage->cpsr);           // ldr r1, [->cpsr]
-  emit_op   (0xe128f001);                              // msr cpsr_f, r1
-  emit_op   (0xe1a0e005);                              // mov lr, r5
-  emit_op   (0xe8943fff);                              // ldmia r4, {r0-r13}
-  emit_op   (0xe12fff1e);                              // bx lr @ return
 }
 
 static void segv_sigaction(int num, siginfo_t *info, void *ctx)
@@ -790,12 +764,12 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   *pc = make_jmp(pc, g_code_ptr, 0);
 
   // generate code:
-  // TODO: multithreading
-  emit_op_io(0xe50f0000, &g_linkpage->saved_regs[0]);            // str r0,  [->saved_regs[0]] @ save r0
-  emit_op_io(0xe50fe000, &g_linkpage->saved_regs[14]);           // str r14, [->saved_regs[14]]
+  emit_op   (0xe50d0000 + 0xf00 - 4 * 0);                        // str r0, [sp, #(-0xf00 + r0_offs)]
+  emit_op   (0xe50de000 + 0xf00 - 4 * 14);                       // str lr, [sp, #(-0xf00 + lr_offs)]
   emit_op   (0xe24f0000 + (g_code_ptr - (u32 *)op_ctx + 2) * 4); // sub r0, pc, #op_ctx
-  emit_op   (make_jmp(g_code_ptr, &g_linkpage->code[0], 1));     // bl common_code
-  emit_op_io(0xe51fe000, &g_linkpage->saved_regs[14]);           // ldr r14, [->saved_regs[14]]
+  emit_op   (0xe1a0e00f);                                        // mov lr, pc
+  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler);           // ldr pc, =handle_op
+  emit_op   (0xe51de000 + 0xf00 - 4 * 14);                       // ldr lr, [sp, #(-0xf00 + lr_offs)]
   emit_op   (make_jmp(g_code_ptr, pc + 1, 0));                   // jmp <back>
 
   // sync caches
@@ -828,11 +802,6 @@ void emu_init(void *map_bottom)
   void *pret;
   int ret;
 
-  g_handler_stack_end = (void *)((long)alloca(1536 * 1024) & ~0xffff);
-  log("handler stack @ %p (current %p)\n", g_handler_stack_end, &ret);
-  // touch it now. If we crash now we'll know why
-  *((char *)g_handler_stack_end - 4096) = 1;
-
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
   pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
               MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
@@ -842,6 +811,13 @@ void emu_init(void *map_bottom)
   }
   log("linkpages @ %p\n", g_linkpage);
   init_linkpage();
+
+  mmsp2.umem = mmap(NULL, 0x2000000, PROT_READ|PROT_WRITE|PROT_EXEC,
+                    MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  if (mmsp2.umem == MAP_FAILED) {
+    perror(PFX "mmap upper mem");
+    exit(1);
+  }
 
   // host stuff
   ret = host_video_init(&host_stride, 0);
@@ -887,9 +863,7 @@ struct dev_fd_t emu_interesting_fds[] = {
 
 static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
-  struct uppermem_block *umem;
-  char name[32];
-  int fd;
+  u8 *umem, *umem_end;
 
   // SoC regs
   if ((offset & ~0xffff) == 0xc0000000) {
@@ -902,42 +876,19 @@ static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
   // upper mem
-  if ((offset & 0xfe000000) != 0x02000000)
+  if ((offset & 0xfe000000) != 0x02000000) {
     err("unexpected devmem mmap @ %08x\n", offset);
-
-  umem = calloc(1, sizeof(*umem));
-  if (umem == NULL) {
-    err("OOM\n");
-    return MAP_FAILED;
-  }
-
-  umem->addr = offset;
-  umem->size = length;
-  umem->mem = mmap(NULL, length, prot, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-  if (umem->mem != MAP_FAILED)
-    goto done;
-
-  log("upper mem @ %08x %d mmap fail, trying backing file\n", offset, length);
-  sprintf(name, "m%08x", offset);
-  fd = open(name, O_CREAT|O_RDWR, 0644);
-  lseek(fd, length - 1, SEEK_SET);
-  name[0] = 0;
-  write(fd, name, 1);
-
-  umem->mem = mmap(NULL, length, prot, MAP_SHARED, fd, 0);
-  if (umem->mem == MAP_FAILED) {
-    err("failed, giving up\n");
-    close(fd);
-    free(umem);
     errno = EINVAL;
     return MAP_FAILED;
   }
 
-done:
-  log("upper mem @ %08x %d\n", offset, length);
-  umem->next = upper_mem;
-  upper_mem = umem;
-  return umem->mem;
+  umem = uppermem_lookup(offset, &umem_end);
+  if (umem + length > umem_end)
+    err("warning: uppermem @ %08x overflows by %d bytes\n",
+        offset, umem + length - umem_end);
+
+  dbg("upper mem @ %08x %d\n", offset, length);
+  return umem;
 }
 
 void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset)
@@ -1069,19 +1020,23 @@ static const struct {
   { "/mnt/tmp/", "/tmp/" },
 };
 
-// FIXME: threads..
 static const char *wrap_path(const char *path)
 {
-  static char tmp_path[512];
+  char *buff;
+  size_t size;
   int i, len;
 
   // do only path mapping for now
   for (i = 0; i < ARRAY_SIZE(path_map); i++) {
     len = strlen(path_map[i].from);
     if (strncmp(path, path_map[i].from, len) == 0) {
-      snprintf(tmp_path, sizeof(tmp_path), "%s%s", path_map[i].to, path + len);
-      dbg("mapped path \"%s\" -> \"%s\"\n", path, tmp_path);
-      return tmp_path;
+      size = strlen(path) + strlen(path_map[i].to) + 1;
+      buff = malloc(size);
+      if (buff == NULL)
+        break;
+      snprintf(buff, size, "%s%s", path_map[i].to, path + len);
+      dbg("mapped path \"%s\" -> \"%s\"\n", path, buff);
+      return buff;
     }
   }
 
@@ -1090,13 +1045,20 @@ static const char *wrap_path(const char *path)
 
 void *emu_do_fopen(const char *path, const char *mode)
 {
-  return fopen(wrap_path(path), mode);
+  const char *w_path = wrap_path(path);
+  FILE *ret;
+  ret = fopen(w_path, mode);
+  if (w_path != path)
+    free((void *)w_path);
+  return ret;
 }
 
+// FIXME: threads..
 int emu_do_system(const char *command)
 {
   static char tmp_path[512];
-  char *p, *p2;
+  const char *p2;
+  char *p;
 
   if (command == NULL)
     return -1;
@@ -1110,7 +1072,11 @@ int emu_do_system(const char *command)
   make_local_path(tmp_path, sizeof(tmp_path), "ginge_prep");
   p = tmp_path + strlen(tmp_path);
 
-  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " %s", wrap_path(command));
+  p2 = wrap_path(command);
+  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " %s", p2);
+  if (p2 != command)
+    free((void *)p2);
+
   dbg("system: \"%s\"\n", tmp_path);
   return system(tmp_path);
 }

@@ -36,7 +36,10 @@ enum {
 
 void do_patches(void *ptr, unsigned int size);
 
+struct op_context;
+
 void  emu_init(void *map_bottom);
+void  emu_call_handle_op(struct op_context *op_ctx);
 void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset);
 int   emu_do_ioctl(int fd, int request, void *argp);
 int   emu_read_gpiodev(void *buf, int count);

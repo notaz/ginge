@@ -1,3 +1,5 @@
+@ vim:filetype=armasm
+
 .text
 
 /* void do_entry(Elf32_Addr entry, void *stack_frame, int stack_frame_elems, void *exitf); */

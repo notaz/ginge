@@ -20,7 +20,7 @@ ASFLAGS += --32
 endif
 ifeq "$(ARCH)" "arm"
 ASFLAGS += -mfloat-abi=soft
-OBJ += sys_cacheflush.o
+OBJ += sys_cacheflush.o emu_arm.o
 endif
 
 vpath %.c = ../common/
