@@ -10,7 +10,7 @@
 #include <termios.h>
 
 
-int   real_open(const char *pathname, int flags, mode_t mode);
+int   real_open(const char *pathname, int flags, ...);
 FILE *real_fopen(const char *path, const char *mode);
 void *real_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int   real_read(int fd, void *buf, size_t count);

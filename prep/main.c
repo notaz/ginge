@@ -16,11 +16,18 @@
 #define LOADER_DYNAMIC  "ginge_dyn.sh"
 #define LAUNCHER        "gp2xmenu"
 
+#ifdef PND
+#define WRAP_APP        "op_runfbapp "
+#else
+#define WRAP_APP        ""
+#endif
+
 #include "font.c"
 
 static void *fb_mem;
 static int fb_stride;
 static int fb_x, fb_y;
+static int init_done;
 
 static char *sskip(char *p)
 {
@@ -34,6 +41,16 @@ static char *cskip(char *p)
   while (p && *p && !isspace(*p))
     p++;
   return p;
+}
+
+static void fb_text_init(void)
+{
+  int ret = host_video_init(&fb_stride, 1);
+  if (ret == 0)
+    fb_mem = host_video_flip();
+  fb_x = 4;
+  fb_y = 4;
+  init_done = 1;
 }
 
 static void fb_syms_out(void *fbi, int x, int y, int dotsz, int stride, const char *text, int count)
@@ -72,6 +89,9 @@ static void fb_text_out(char *text)
   char *p, *pe;
   int l;
 
+  if (!init_done)
+    fb_text_init();
+
   if (fb_mem == NULL)
     return;
 
@@ -96,15 +116,6 @@ static void fb_text_out(char *text)
     fb_x += 8 * l;
     p = pe;
   }
-}
-
-static void fb_text_init(void)
-{
-  int ret = host_video_init(&fb_stride, 1);
-  if (ret == 0)
-    fb_mem = host_video_flip();
-  fb_x = 4;
-  fb_y = 4;
 }
 
 static void fbprintf(int is_err, const char *format, ...)
@@ -242,8 +253,6 @@ int main(int argc, char *argv[])
   FILE *fin, *fout;
   int ret;
 
-  fb_text_init();
-
   if (argc < 2) {
     err("usage: %s <script|program> [args]\n", argv[0]);
     return 1;
@@ -281,13 +290,13 @@ int main(int argc, char *argv[])
     break;
 
   case 1:
-    fprintf(fout, "op_runfbapp %s%s ", root_path, LOADER_STATIC);
+    fprintf(fout, WRAP_APP "%s%s ", root_path, LOADER_STATIC);
     dump_args(fout, argc - 1, &argv[1]);
     fprintf(fout, "\n");
     goto no_in_script;
 
   case 2:
-    fprintf(fout, "op_runfbapp %s%s \"%s\" ", root_path, LOADER_DYNAMIC, root_path);
+    fprintf(fout, WRAP_APP "%s%s \"%s\" ", root_path, LOADER_DYNAMIC, root_path);
     dump_args(fout, argc - 1, &argv[1]);
     fprintf(fout, "\n");
     goto no_in_script;
@@ -385,12 +394,12 @@ int main(int argc, char *argv[])
       switch (ret) {
       case 1:
         printf(PFX "prefixing as static: %s", p);
-        fprintf(fout, "op_runfbapp %s%s ", root_path, LOADER_STATIC);
+        fprintf(fout, WRAP_APP "%s%s ", root_path, LOADER_STATIC);
         break;
 
       case 2:
         printf(PFX "prefixing as dynamic: %s", p);
-        fprintf(fout, "op_runfbapp %s%s \"%s\" ", root_path, LOADER_DYNAMIC, root_path);
+        fprintf(fout, WRAP_APP "%s%s \"%s\" ", root_path, LOADER_DYNAMIC, root_path);
         break;
 
       default:
@@ -412,10 +421,13 @@ no_in_script:
 
   fclose(fout);
 
-  msg("starting script..\n");
-  if (have_cramfs)
-    msg("\nsome files need to be unpacked, this may tike a few minutes.\n"
-        "Please wait at least while SD LED is active.\n");
+  //msg("starting script..\n");
+  if (have_cramfs) {
+    msg("\nsome files need to be unpacked, this may tike a few minutes.\n");
+#ifdef PND
+    msg("Please wait at least while SD LED is active.\n");
+#endif
+  }
   system("echo ---; cat /tmp/ginge_conv.sh; echo ---");
   chmod(out_script, S_IRWXU|S_IRWXG|S_IRWXO);
   chdir(cwd);

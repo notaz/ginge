@@ -9,6 +9,14 @@
 #define DL
 #include "override.c"
 
+static void next_line(FILE *f)
+{
+  int c;
+  do {
+    c = fgetc(f);
+  } while (c != EOF && c != '\n');
+}
+
 __attribute__((constructor))
 static void ginge_init(void)
 {
@@ -32,7 +40,7 @@ static void ginge_init(void)
     exit(1);
   }
 
-  ret = fscanf(f, "%x-%x %*s %*s %*s %*s %*s\n", &start, &end);
+  ret = fscanf(f, "%x-%x ", &start, &end);
   if (ret != 2) {
     perror("parse maps");
     exit(1);
@@ -46,6 +54,8 @@ static void ginge_init(void)
     perror("warning: mprotect");
 
   while (1) {
+    next_line(f);
+
     ret = fscanf(f, "%x-%*s %*s %*s %*s %*s %*s\n", &start);
     if (ret <= 0)
       break;
@@ -61,6 +71,10 @@ static void ginge_init(void)
     fputs(buff, stdout);
 #endif
   fclose(f);
+
+  // remove self from preload, further commands (from system() and such)
+  // will be handled by ginge_prep.
+  unsetenv("LD_PRELOAD");
 
   emu_init((void *)lowest_segment);
 }

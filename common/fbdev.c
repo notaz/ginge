@@ -64,7 +64,7 @@ struct vout_fbdev *vout_fbdev_init(const char *fbdev_name, int *w, int *h, int n
 	if (fbdev == NULL)
 		return NULL;
 
-	fbdev->fd = open(fbdev_name, O_RDWR, 0);
+	fbdev->fd = open(fbdev_name, O_RDWR);
 	if (fbdev->fd == -1) {
 		fprintf(stderr, "%s: ", fbdev_name);
 		perror("open");

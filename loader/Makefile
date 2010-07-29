@@ -22,20 +22,28 @@ ifeq "$(ARCH)" "arm"
 ASFLAGS += -mfloat-abi=soft
 OBJ += sys_cacheflush.o emu_arm.o
 endif
+ifdef PND
+CFLAGS += -DPND
+OBJ += host_pnd.o
+endif
+ifdef WIZ
+CFLAGS += -DWIZ
+OBJ += host_wiz.o
+endif
 
 vpath %.c = ../common/
 
 TARGET_S = ginge_sloader
 TARGET_D = ginge_dyn
 
-OBJ += emu.o host_fb.o host_pnd.o cmn.o
+OBJ += emu.o host_fb.o cmn.o
 OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
 OBJ_D += $(OBJ) dl.o
 
 all: $(TARGET_S) $(TARGET_D)
 
 $(TARGET_S): LDFLAGS += -Wl,-T script_$(ARCH).lds
-$(TARGET_D): LDFLAGS += -ldl
+$(TARGET_D): LDFLAGS += -ldl -Wl,--version-script=$(TARGET_D).symver
 
 $(TARGET_S): $(OBJ_S)
 	$(CC) -o $@ $^ -static $(LDFLAGS)

@@ -1,6 +1,7 @@
 // vim:shiftwidth=2:expandtab
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -167,6 +168,7 @@ static UNUSED int w_system(const char *command)
   /* wrapper to real functions, to be set up on load */ \
   static typeof(sym) *p_real_##sym
 
+// note: update symver too
 MAKE_WRAP_SYM(open);
 MAKE_WRAP_SYM(fopen);
 MAKE_WRAP_SYM(mmap);
@@ -212,8 +214,14 @@ static const struct {
 #endif
 
 // just call real funcs for static, pointer for dynamic
-int real_open(const char *pathname, int flags, mode_t mode)
+int real_open(const char *pathname, int flags, ...)
 {
+  va_list ap;
+  mode_t mode;
+
+  va_start(ap, flags);
+  mode = va_arg(ap, mode_t);
+  va_end(ap);
   return open(pathname, flags, mode);
 }
 

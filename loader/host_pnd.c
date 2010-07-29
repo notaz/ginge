@@ -14,17 +14,16 @@
 #include "realfuncs.h"
 
 static int ifds[2] = { -1, -1 };
-static int init_done;
 static int keystate;
 
-static void init(void)
+int host_init(void)
 {
   char buff[64];
   int i, ifd, ret;
 
   for (ifd = -1, i = 0; ifds[0] == -1 || ifds[1] == -1; i++) {
     snprintf(buff, sizeof(buff), "/dev/input/event%i", i);
-    ifd = open(buff, O_RDONLY | O_NONBLOCK, 0);
+    ifd = open(buff, O_RDONLY | O_NONBLOCK);
     if (ifd == -1)
       break;
 
@@ -47,7 +46,8 @@ static void init(void)
     fprintf(stderr, PFX "missing buttons\n");
   if (ifds[1] < 0)
     fprintf(stderr, PFX "missing keypad\n");
-  init_done = 1;
+
+  return 0;
 }
 
 static const struct {
@@ -83,9 +83,6 @@ int host_read_btns(void)
 {
   struct input_event ev;
   int i, ret;
-
-  if (!init_done)
-    init();
 
   while (1)
   {

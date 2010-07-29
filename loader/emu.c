@@ -103,14 +103,10 @@ static struct {
 
   // state
   void *umem;
-  u16 host_pal[256];
   u32 old_mlc_stl_adr;
   u32 btn_state; // as seen through /dev/GPIO
   u32 dirty_pal:1;
 } mmsp2;
-
-static u16 *host_screen;
-static int host_stride;
 
 
 #if defined(LOG_IO) || defined(LOG_IO_UNK)
@@ -270,56 +266,34 @@ bad_blit:
   dump_blitter();
 }
 
-// TODO: hw scaler stuff
-static void mlc_flip(u8 *src, int bpp)
+// FIXME: pass real dimensions to blitters
+static void mlc_flip(void *src, int bpp)
 {
-  u16 *dst = host_screen;
-  u16 *hpal = mmsp2.host_pal;
-  int i, u;
+  u32 *srcp = NULL;
 
+  // only pass pal to host if it's dirty
   if (bpp <= 8 && mmsp2.dirty_pal) {
-    u32 *srcp = mmsp2.mlc_stl_pallt_d32;
-    u16 *dstp = hpal;
-
-    for (i = 0; i < 256; i++, srcp++, dstp++) {
-      u32 t = *srcp;
-      *dstp = ((t >> 8) & 0xf800) | ((t >> 5) & 0x07e0) | ((t >> 3) & 0x001f);
-    }
+    srcp = mmsp2.mlc_stl_pallt_d32;
     mmsp2.dirty_pal = 0;
   }
 
   switch (bpp) {
   case  4:
-    for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
-      for (u = 320 / 2; u > 0; u--, src++) {
-        *dst++ = hpal[*src >> 4];
-        *dst++ = hpal[*src & 0x0f];
-      }
-    }
+    host_video_blit4(src, 320, 240, srcp);
     break;
 
   case  8:
-    for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
-      for (u = 320 / 4; u > 0; u--) {
-        *dst++ = hpal[*src++];
-        *dst++ = hpal[*src++];
-        *dst++ = hpal[*src++];
-        *dst++ = hpal[*src++];
-      }
-    }
+    host_video_blit8(src, 320, 240, srcp);
     break;
 
   case 16:
-    for (i = 0; i < 240; i++, dst += host_stride / 2, src += 320*2)
-      memcpy(dst, src, 320*2);
+    host_video_blit16(src, 320, 240);
     break;
 
   case 24:
     // TODO
     break;
   }
-
-  host_screen = host_video_flip();
 }
 
 #define ts_add_nsec(ts, ns) { \
@@ -372,11 +346,11 @@ static void *fb_sync_thread(void *arg)
       ts_add_nsec(ts, 50000000);
       manual_refresh++;
       if (manual_refresh == 2)
-        log("fb_thread: switch to manual refresh\n");
+        dbg("fb_thread: switch to manual refresh\n");
     } else {
       ts_add_nsec(ts, 16666667);
       if (manual_refresh > 1)
-        log("fb_thread: switch to auto refresh\n");
+        dbg("fb_thread: switch to auto refresh\n");
       manual_refresh = 0;
     }
 
@@ -747,7 +721,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
     // real crash - time to die
     err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
     for (i = 0; i < 8; i++)
-      err(" r%d=%08x r%2d=%08x\n", i, regs[i], i+8, regs[i+8]);
+      dbg(" r%d=%08x r%2d=%08x\n", i, regs[i], i+8, regs[i+8]);
     signal(num, SIG_DFL);
     raise(num);
     return;
@@ -804,7 +778,7 @@ void emu_init(void *map_bottom)
 
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
   pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
-              MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+              MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0);
   if (pret != g_linkpage) {
     perror(PFX "mmap linkpage");
     exit(1);
@@ -812,20 +786,31 @@ void emu_init(void *map_bottom)
   log("linkpages @ %p\n", g_linkpage);
   init_linkpage();
 
+  // host stuff
+  ret = host_init();
+  if (ret != 0) {
+    err("can't init host\n");
+    exit(1);
+  }
+
+  ret = host_video_init(NULL, 0);
+  if (ret != 0) {
+    err("can't init host video\n");
+    exit(1);
+  }
+
+#ifdef WIZ
+  // we are short on memmory on Wiz, need special handling
+  extern void *host_mmap_upper(void);
+  mmsp2.umem = host_mmap_upper();
+#else
   mmsp2.umem = mmap(NULL, 0x2000000, PROT_READ|PROT_WRITE|PROT_EXEC,
                     MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+#endif
   if (mmsp2.umem == MAP_FAILED) {
     perror(PFX "mmap upper mem");
     exit(1);
   }
-
-  // host stuff
-  ret = host_video_init(&host_stride, 0);
-  if (ret != 0) {
-    err("can't init video\n");
-    exit(1);
-  }
-  host_screen = host_video_flip();
 
   ret = pthread_create(&tid, NULL, fb_sync_thread, NULL);
   if (ret != 0) {
@@ -844,16 +829,16 @@ void emu_init(void *map_bottom)
 
 int emu_read_gpiodev(void *buf, int count)
 {
-  unsigned int btns;
-
-  if (count < 4) {
+  if (count <= 0) {
     err("gpiodev read %d?\n", count);
     return -1;
   }
+  if (count > 4)
+    count = 4;
 
-  btns = host_read_btns();
-  memcpy(buf, &btns, 4);
-  return 4;
+  mmsp2.btn_state = host_read_btns();
+  memcpy(buf, &mmsp2.btn_state, count);
+  return count;
 }
 
 struct dev_fd_t emu_interesting_fds[] = {

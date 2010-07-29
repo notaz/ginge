@@ -1,0 +1,14 @@
+#!/bin/sh
+
+/sbin/rmmod warm 2> /dev/null
+/sbin/insmod ./warm_2.6.24.ko
+
+# theoretically GP2X apps can make use of more RAM, because
+# Wiz has 2.6 kernel (larger memory requirements) and larger
+# reserved areas, so we mount some swap here just in case.
+mkswap swapfile
+swapon swapfile
+
+./gp2xmenu
+
+swapoff swapfile

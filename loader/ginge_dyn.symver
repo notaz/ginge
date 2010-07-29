@@ -1,0 +1,16 @@
+{
+global:
+	open;
+	fopen;
+	mmap;
+	mmap2;
+	read;
+	ioctl;
+	sigaction;
+	tcgetattr;
+	tcsetattr;
+	system;
+
+local:
+	*;
+};

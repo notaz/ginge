@@ -8,13 +8,15 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <linux/fb.h>
+#include "warm.h"
 
 static volatile unsigned short *memregs;
 static volatile unsigned long  *memregl;
-static int memdev = -1;
+int memdev = -1;
 
 #define FB_BUF_COUNT 4
 static unsigned int fb_paddr[FB_BUF_COUNT];
+static int fb_buf_count = FB_BUF_COUNT;
 static int fb_work_buf;
 static int fbdev = -1;
 
@@ -28,12 +30,12 @@ static void vout_gp2x_flip(void)
 	memregl[0x4058>>2] |= 0x10;
 
 	fb_work_buf++;
-	if (fb_work_buf >= FB_BUF_COUNT)
+	if (fb_work_buf >= fb_buf_count)
 		fb_work_buf = 0;
 	g_screen_ptr = gp2x_screens[fb_work_buf];
 }
 
-static int vout_gp2x_init(void)
+static int vout_gp2x_init(int no_dblbuf)
 {
 	struct fb_fix_screeninfo fbfix;
 	int i, ret;
@@ -75,6 +77,13 @@ static int vout_gp2x_init(void)
 	}
 	memset(gp2x_screens[0], 0, 320*240*2*FB_BUF_COUNT);
 
+	if (!no_dblbuf) {
+		warm_init();
+		ret = warm_change_cb_range(WCB_B_BIT, 1, gp2x_screens[0], 320*240*2*FB_BUF_COUNT);
+		if (ret != 0)
+			fprintf(stderr, "could not make fb buferable.\n");
+	}
+
 	printf("  %p -> %08x\n", gp2x_screens[0], fb_paddr[0]);
 	for (i = 1; i < FB_BUF_COUNT; i++)
 	{
@@ -84,6 +93,9 @@ static int vout_gp2x_init(void)
 	}
 	fb_work_buf = 0;
 	g_screen_ptr = gp2x_screens[0];
+
+	if (no_dblbuf)
+		fb_buf_count = 1;
 
 	return 0;
 }
@@ -96,5 +108,7 @@ void vout_gp2x_finish(void)
 
 	munmap((void *)memregs, 0x20000);
 	close(memdev);
+
+	warm_finish();
 }
 

@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
       return 1;
     }
 
-    printf("load %d %08x-%08x from %08x\n", phdr[i].p_type,
+    log("load %d %08x-%08x from %08x\n", phdr[i].p_type,
       phdr[i].p_vaddr, end_addr, phdr[i].p_offset);
 
     align = phdr[i].p_vaddr & 0xfff;
@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
     stack_frame[sfp++] = (long)environ[i];
   stack_frame[sfp++] = 0;
 
-  printf("entering %08x, %d stack entries\n", hdr.e_entry, sfp);
+  log("entering %08x, %d stack entries\n", hdr.e_entry, sfp);
   do_entry(hdr.e_entry, stack_frame, sfp, NULL);
 
   fprintf(stderr, "do_entry failed!\n");

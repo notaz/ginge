@@ -46,6 +46,7 @@ int   emu_read_gpiodev(void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);
 int   emu_do_system(const char *command);
 
+int   host_init(void);
 int   host_read_btns(void);
 
 enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,
