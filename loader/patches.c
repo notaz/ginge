@@ -45,8 +45,25 @@ static const unsigned int sig_mask_sigaction[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000, 0xff000000
 };
 
+static const unsigned int sig_execve[] = {
+  0xef90000b, 0xe1a04000, 0xe3700a01
+};
+#define sig_mask_execve sig_mask_all
 
-#define PATCH(f) { sig_##f, sig_mask_##f, ARRAY_SIZE(sig_##f), w_##f }
+static const unsigned int sig_execve2[] = {
+  0xef90000b, 0xe3700a01, 0xe1a04000
+};
+#define sig_mask_execve2 sig_mask_all
+
+static const unsigned int sig_chdir[] = {
+  0xef90000c, 0xe3700a01, 0x312fff1e, 0xea0004bb
+};
+static const unsigned int sig_mask_chdir[] = {
+  0xffffffff, 0xffffffff, 0xffffffff, 0xff000000
+};
+
+#define PATCH_(f,p) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), w_##f }
+#define PATCH(f) PATCH_(f,f)
 
 static const struct {
   const unsigned int *sig;
@@ -60,6 +77,8 @@ static const struct {
   PATCH(read),
   PATCH(ioctl),
   PATCH(sigaction),
+//  PATCH_(execve, execve2), // hangs
+  PATCH(chdir),
 };
 
 void do_patches(void *ptr, unsigned int size)

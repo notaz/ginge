@@ -309,6 +309,8 @@ static void mlc_flip(void *src, int bpp)
   } \
 }
 
+static int fb_sync_thread_paused;
+
 static void *fb_sync_thread(void *arg)
 {
   int invalid_fb_addr = 1;
@@ -345,6 +347,10 @@ static void *fb_sync_thread(void *arg)
       sleep(1);
       continue;
     }
+    if (fb_sync_thread_paused) {
+      ts_add_nsec(ts, 100000000);
+      continue;
+    }
 
     if (wait_ret != ETIMEDOUT) {
       clock_gettime(CLOCK_REALTIME, &ts);
@@ -373,6 +379,19 @@ static void *fb_sync_thread(void *arg)
 
     mlc_flip(gp2x_fb, bpp);
   }
+}
+
+static void fb_thread_pause(void)
+{
+  fb_sync_thread_paused = 1;
+  // wait until it finishes last refresh
+  // that it might be doing now
+  usleep(10000);
+}
+
+static void fb_thread_resume(void)
+{
+  fb_sync_thread_paused = 0;
 }
 
 static u32 xread8(u32 a)
@@ -1049,6 +1068,7 @@ int emu_do_system(const char *command)
   static char tmp_path[512];
   const char *p2;
   char *p;
+  int ret;
 
   if (command == NULL)
     return -1;
@@ -1068,6 +1088,11 @@ int emu_do_system(const char *command)
     free((void *)p2);
 
   dbg("system: \"%s\"\n", tmp_path);
-  return system(tmp_path);
+
+  // the app might want the screen too..
+  fb_thread_pause();
+  ret = system(tmp_path);
+  fb_thread_resume();
+  return ret;
 }
 

@@ -20,6 +20,9 @@ typedef struct sigaction sigaction_t;
 int   real_tcgetattr(int fd, struct termios *termios_p);
 int   real_tcsetattr(int fd, int optional_actions, const struct termios *termios_p);
 int   real_system(const char *command);
+// exec* - skipped
+int   real_execve(const char *filename, char *const argv[], char *const envp[]);
+int   real_chdir(const char *path);
 
 #define open real_open
 #define fopen real_fopen
@@ -30,4 +33,8 @@ int   real_system(const char *command);
 #define tcgetattr real_tcgetattr
 #define tcsetattr real_tcsetattr
 #define system real_system
+#define execl real_execl
+#define execlp real_execlp
+#define execve real_execve
+#define chdir real_chdir
 

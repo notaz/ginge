@@ -150,6 +150,42 @@ static UNUSED int w_system(const char *command)
   return ret;
 }
 
+// 4 functions bellow are efforts to prevent gp2xmenu from being started..
+static UNUSED int w_execl(const char *path, const char *arg, ...)
+{
+  // don't allow exec (for now)
+  strace("execl(%s, %s, ...) = ?\n", path, arg);
+  exit(0);
+}
+
+static UNUSED int w_execlp(const char *file, const char *arg, ...)
+{
+  strace("execlp(%s, %s, ...) = ?\n", file, arg);
+  exit(0);
+}
+
+// static note: this can't safely return because of the way it's patched in
+// static note2: can't be used, execve hangs?
+static UNUSED int w_execve(const char *filename, char *const argv[],
+                  char *const envp[])
+{
+  strace("execve(%s, %p, %p) = ?\n", filename, argv, envp);
+  if (filename != NULL && strstr(filename, "/gp2xmenu") != NULL)
+    exit(0);
+  return execve(filename, argv, envp);
+}
+
+static int w_chdir(const char *path)
+{
+  int ret;
+  if (path != NULL && strstr(path, "/usr/gp2x") != NULL)
+    ret = 0;
+  else
+    ret = chdir(path);
+  strace("chdir(%s) = %d\n", path, ret);
+  return ret;
+}
+
 #undef open
 #undef fopen
 #undef mmap
@@ -159,12 +195,19 @@ static UNUSED int w_system(const char *command)
 #undef tcgetattr
 #undef tcsetattr
 #undef system
+#undef execl
+#undef execlp
+#undef execve
+#undef chdir
 
 #ifdef DL
 
-#define MAKE_WRAP_SYM(sym) \
+#define MAKE_WRAP_SYM_N(sym) \
   /* alias wrap symbols to real names */ \
-  typeof(sym) sym __attribute__((alias("w_" #sym))); \
+  typeof(sym) sym __attribute__((alias("w_" #sym)))
+
+#define MAKE_WRAP_SYM(sym) \
+  MAKE_WRAP_SYM_N(sym); \
   /* wrapper to real functions, to be set up on load */ \
   static typeof(sym) *p_real_##sym
 
@@ -178,6 +221,10 @@ MAKE_WRAP_SYM(sigaction);
 MAKE_WRAP_SYM(tcgetattr);
 MAKE_WRAP_SYM(tcsetattr);
 MAKE_WRAP_SYM(system);
+MAKE_WRAP_SYM_N(execl);
+MAKE_WRAP_SYM_N(execlp);
+MAKE_WRAP_SYM(execve);
+MAKE_WRAP_SYM(chdir);
 typeof(mmap) mmap2 __attribute__((alias("w_mmap")));
 
 #define REAL_FUNC_NP(name) \
@@ -196,6 +243,9 @@ static const struct {
   REAL_FUNC_NP(tcgetattr),
   REAL_FUNC_NP(tcsetattr),
   REAL_FUNC_NP(system),
+  // exec* - skipped
+  REAL_FUNC_NP(execve),
+  REAL_FUNC_NP(chdir),
 };
 
 #define open p_real_open
@@ -207,6 +257,8 @@ static const struct {
 #define tcgetattr p_real_tcgetattr
 #define tcsetattr p_real_tcsetattr
 #define system p_real_system
+#define execve p_real_execve
+#define chdir p_real_chdir
 
 #undef MAKE_WRAP_SYM
 #undef REAL_FUNC_NP
@@ -264,4 +316,17 @@ int real_tcsetattr(int fd, int optional_actions,
 int real_system(const char *command)
 {
   return system(command);
+}
+
+// real_exec* is missing intentionally - we don't need them
+
+int real_execve(const char *filename, char *const argv[],
+                  char *const envp[])
+{
+  return execve(filename, argv, envp);
+}
+
+int real_chdir(const char *path)
+{
+  return chdir(path);
 }

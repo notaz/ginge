@@ -1,5 +1,6 @@
 
 GINGE - Ginge Is Not GP2X Emulator
+release 1
 
 (C) notaz, 2010
 http://notaz.gp2x.de/
@@ -46,7 +47,12 @@ License
 -------
 
 gp2xmenu is based on GPH GPL source (http://www.gnu.org/licenses/gpl.html).
-Source is available at 
+Source is available at http://notaz.gp2x.de/releases/ginge/gp2xmenu.tar.bz2
+
+Ginge may come with some libraries. Those libraries are unmodified copies
+of ones found in root filesystems in GP2X and Wiz and are included to more
+accurately reproduce environment on GP2X. Their source code may or may not be
+available, I do not have it nor did I use it.
 
 Remaining portion is released under custom closed source license. It is not
 derived from gp2xmenu and is completely standalone, the menu is only included

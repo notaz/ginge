@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <termios.h>
+#include <unistd.h>
 
 static int open_(const char *name)
 {
@@ -41,6 +42,12 @@ int main(int argc, char *argv[])
 
 	ioctl(-1, 0);
 	signal(7, SIG_DFL);
+	system("buhbuh");
+	execl("bah", "bah", NULL);
+	execlp("bah", "bah", NULL);
+	if (argc == 1000)
+		fork();
+	chdir("wuhahaha!");
 //	tcgetattr(-1, NULL);
 //	tcsetattr(-1, 0, NULL);
 

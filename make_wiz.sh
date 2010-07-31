@@ -2,12 +2,18 @@
 
 set -e
 
-dist/make_cmn.sh out_wiz
-mkdir -p out_wiz/tools
-cp dist/ginge.gpe out_wiz/
-cp dist/ginge32.png out_wiz/ginge.png
-cp dist/ginge_dyn_oabi.sh out_wiz/ginge_dyn.sh
-cp tools/cramfsck_oabi out_wiz/tools/cramfsck
-cp tools/warm_2.6.24.ko out_wiz/tools/
+out=out_wiz
 
-dd if=/dev/zero of=out_wiz/swapfile bs=1M count=16
+dist/make_cmn.sh ${out}
+mkdir -p ${out}/tools ${out}/lib
+cp dist/ginge.gpe ${out}/
+cp dist/ginge32.png ${out}/ginge.png
+cp dist/ginge_dyn_oabi.sh ${out}/ginge_dyn.sh
+cp lib/libSDL-1.2.so.0.7.0 ${out}/lib/libSDL-1.2.so.0
+cp tools/cramfsck_oabi ${out}/tools/cramfsck
+cp tools/warm_2.6.24.ko ${out}/tools/
+
+dd if=/dev/zero of=${out}/swapfile bs=1M count=16
+
+cd ${out}
+zip -9r ../ginge_wiz.zip *
