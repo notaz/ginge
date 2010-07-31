@@ -88,7 +88,7 @@ struct warm_change_cb
 	unsigned long addr;
 	unsigned long size;
 	int cb;
-	int is_set;
+	int is_set;	/* set (1) or clear (0) */
 };
 
 #define WARMC_CACHE_OP	_IOW(WARM_IOCTL_BASE,  0, struct warm_cache_op)
