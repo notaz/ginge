@@ -258,6 +258,13 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  if (strcmp(argv[1], "--cleanup") == 0) {
+    // as loader may crash eny time, restore screen for them menu
+    host_video_init(NULL, 0);
+    host_video_finish();
+    return 0;
+  }
+
   if (getcwd(cwd, sizeof(cwd)) == NULL) {
     err(PFX "failed to get cwd\n");
     return 1;
@@ -414,6 +421,10 @@ pass:
   fclose(fin);
 
 no_in_script:
+#ifdef WIZ
+  fprintf(fout, "sync\n");
+  fprintf(fout, "%sginge_prep --cleanup\n", root_path);
+#endif
   if (rerun_gp2xmenu) {
     fprintf(fout, "cd %s\n", root_path);
     fprintf(fout, "exec %s%s\n", root_path, LAUNCHER);

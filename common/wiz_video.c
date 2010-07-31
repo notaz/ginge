@@ -100,6 +100,59 @@ static int vout_gp2x_init(int no_dblbuf)
 	return 0;
 }
 
+static void vout_gp2x_set_mode(int bpp, int rot)
+{
+	int rot_cmd[2] = { 0, 0 };
+	int code = 0, bytes = 2;
+	unsigned int r;
+	int ret;
+
+	rot_cmd[0] = rot ? 6 : 5;
+	ret = ioctl(fbdev, _IOW('D', 90, int[2]), rot_cmd);
+	if (ret < 0)
+		perror("rot ioctl failed");
+
+	memregl[0x4004>>2] = rot ? 0x013f00ef : 0x00ef013f;
+	memregl[0x4000>>2] |= 1 << 3;
+
+	switch (bpp)
+	{
+		case 8:
+			code = 0x443a;
+			bytes = 1;
+			break;
+
+		case 15:
+		case 16:
+			code = 0x4432;
+			bytes = 2;
+			break;
+
+		default:
+			fprintf(stderr, "unhandled bpp request: %d\n", abs(bpp));
+			return;
+	}
+
+	memregl[0x405c>>2] = bytes;
+	memregl[0x4060>>2] = bytes * (rot ? 240 : 320);
+
+	r = memregl[0x4058>>2];
+	r = (r & 0xffff) | (code << 16) | 0x10;
+	memregl[0x4058>>2] = r;
+}
+
+static void vout_gp2x_set_palette(unsigned int *pal, int len)
+{
+	/* pollux palette is 16bpp only.. */
+	int i;
+	for (i = 0; i < len; i++)
+	{
+		int c = pal[i];
+		c = ((c >> 8) & 0xf800) | ((c >> 5) & 0x07c0) | ((c >> 3) & 0x001f);
+		memregl[0x4070>>2] = (i << 24) | c;
+	}
+}
+
 void vout_gp2x_finish(void)
 {
 	memregl[0x406C>>2] = fb_paddr[0];

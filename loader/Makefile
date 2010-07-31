@@ -28,10 +28,11 @@ OBJ += host_pnd.o
 endif
 ifdef WIZ
 CFLAGS += -DWIZ
-OBJ += host_wiz.o
+OBJ += host_wiz.o wiz_video_arm.o
 endif
 
 vpath %.c = ../common/
+vpath %.s = ../common/
 
 TARGET_S = ginge_sloader
 TARGET_D = ginge_dyn

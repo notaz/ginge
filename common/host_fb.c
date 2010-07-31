@@ -14,6 +14,7 @@ static int host_stride;
 #include "fbdev.c"
 
 static struct vout_fbdev *fbdev;
+static unsigned short host_pal[256];
 
 void *host_video_flip(void)
 {
@@ -42,6 +43,72 @@ int host_video_init(int *stride, int no_dblbuf)
   return 0;
 }
 
+void host_video_finish(void)
+{
+  vout_fbdev_finish(fbdev);
+  fbdev = NULL;
+}
+
+void host_video_update_pal(unsigned int *pal)
+{
+  unsigned short *dstp = host_pal;
+  int i;
+
+  for (i = 0; i < 256; i++, pal++, dstp++) {
+    unsigned int t = *pal;
+    *dstp = ((t >> 8) & 0xf800) | ((t >> 5) & 0x07e0) | ((t >> 3) & 0x001f);
+  }
+}
+
+void host_video_change_bpp(int bpp)
+{
+}
+
+void host_video_blit4(const unsigned char *src, int w, int h)
+{
+  unsigned short *dst = host_screen;
+  unsigned short *hpal = host_pal;
+  int i, u;
+
+  for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
+    for (u = 320 / 2; u > 0; u--, src++) {
+      *dst++ = hpal[*src >> 4];
+      *dst++ = hpal[*src & 0x0f];
+    }
+  }
+
+  host_video_flip();
+}
+
+void host_video_blit8(const unsigned char *src, int w, int h)
+{
+  unsigned short *dst = host_screen;
+  unsigned short *hpal = host_pal;
+  int i, u;
+
+  for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
+    for (u = 320 / 4; u > 0; u--) {
+      *dst++ = hpal[*src++];
+      *dst++ = hpal[*src++];
+      *dst++ = hpal[*src++];
+      *dst++ = hpal[*src++];
+    }
+  }
+
+  host_video_flip();
+}
+
+void host_video_blit16(const unsigned short *src, int w, int h)
+{
+  unsigned short *dst = host_screen;
+  int i;
+
+  for (i = 0; i < 240; i++, dst += host_stride / 2, src += 320)
+    memcpy(dst, src, 320*2);
+
+  host_video_flip();
+}
+
 #elif defined(WIZ)
 
 #include "warm.c"
@@ -66,73 +133,49 @@ int host_video_init(int *stride, int no_dblbuf)
   if (ret != 0)
     return ret;
 
+  vout_gp2x_set_mode(16, !no_dblbuf);
   host_video_flip();
   return 0;
 }
 
-#endif
-
-static unsigned short host_pal[256];
-
-static void host_update_pal(unsigned int *pal)
+void host_video_finish(void)
 {
-  unsigned short *dstp = host_pal;
-  int i;
-
-  for (i = 0; i < 256; i++, pal++, dstp++) {
-    unsigned int t = *pal;
-    *dstp = ((t >> 8) & 0xf800) | ((t >> 5) & 0x07e0) | ((t >> 3) & 0x001f);
-  }
+  vout_gp2x_finish();
 }
 
-void host_video_blit4(const unsigned char *src, int w, int h, unsigned int *pal)
+void host_video_update_pal(unsigned int *pal)
 {
-  unsigned short *dst = host_screen;
-  unsigned short *hpal = host_pal;
-  int i, u;
+  vout_gp2x_set_palette(pal, 256);
+}
 
-  if (pal != NULL)
-    host_update_pal(pal);
+void host_video_change_bpp(int bpp)
+{
+  vout_gp2x_set_mode(bpp, 1);
+}
 
-  for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
-    for (u = 320 / 2; u > 0; u--, src++) {
-      *dst++ = hpal[*src >> 4];
-      *dst++ = hpal[*src & 0x0f];
-    }
-  }
-
+#ifdef LOADER
+void host_video_blit4(const unsigned char *src, int w, int h)
+{
+  memcpy(host_screen, src, 320*240/2); // FIXME
   host_video_flip();
 }
 
-void host_video_blit8(const unsigned char *src, int w, int h, unsigned int *pal)
+void host_video_blit8(const unsigned char *src, int w, int h)
 {
-  unsigned short *dst = host_screen;
-  unsigned short *hpal = host_pal;
-  int i, u;
+  extern void rotated_blit8(void *dst, const void *linesx4);
 
-  if (pal != NULL)
-    host_update_pal(pal);
-
-  for (i = 0; i < 240; i++, dst += host_stride / 2 - 320) {
-    for (u = 320 / 4; u > 0; u--) {
-      *dst++ = hpal[*src++];
-      *dst++ = hpal[*src++];
-      *dst++ = hpal[*src++];
-      *dst++ = hpal[*src++];
-    }
-  }
-
+  rotated_blit8(host_screen, src);
   host_video_flip();
 }
 
 void host_video_blit16(const unsigned short *src, int w, int h)
 {
-  unsigned short *dst = host_screen;
-  int i;
+  extern void rotated_blit16(void *dst, const void *linesx4);
 
-  for (i = 0; i < 240; i++, dst += host_stride / 2, src += 320)
-    memcpy(dst, src, 320*2);
-
+  rotated_blit16(host_screen, src);
   host_video_flip();
 }
+#endif // LOADER
+
+#endif // WIZ
 

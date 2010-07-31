@@ -269,21 +269,26 @@ bad_blit:
 // FIXME: pass real dimensions to blitters
 static void mlc_flip(void *src, int bpp)
 {
-  u32 *srcp = NULL;
+  static int old_bpp;
 
   // only pass pal to host if it's dirty
   if (bpp <= 8 && mmsp2.dirty_pal) {
-    srcp = mmsp2.mlc_stl_pallt_d32;
+    host_video_update_pal(mmsp2.mlc_stl_pallt_d32);
     mmsp2.dirty_pal = 0;
+  }
+
+  if (bpp != old_bpp) {
+    host_video_change_bpp(bpp);
+    old_bpp = bpp;
   }
 
   switch (bpp) {
   case  4:
-    host_video_blit4(src, 320, 240, srcp);
+    host_video_blit4(src, 320, 240);
     break;
 
   case  8:
-    host_video_blit8(src, 320, 240, srcp);
+    host_video_blit8(src, 320, 240);
     break;
 
   case 16:
