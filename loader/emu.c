@@ -1083,7 +1083,7 @@ int emu_do_system(const char *command)
   p = tmp_path + strlen(tmp_path);
 
   p2 = wrap_path(command);
-  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " %s", p2);
+  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " --nomenu %s", p2);
   if (p2 != command)
     free((void *)p2);
 

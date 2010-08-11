@@ -43,6 +43,15 @@ static char *cskip(char *p)
   return p;
 }
 
+static void fb_text_exit(void)
+{
+  if (!init_done)
+    return;
+
+  host_video_finish();
+  init_done = 0;
+}
+
 static void fb_text_init(void)
 {
   int ret = host_video_init(&fb_stride, 1);
@@ -51,6 +60,7 @@ static void fb_text_init(void)
   fb_x = 4;
   fb_y = 4;
   init_done = 1;
+  atexit(fb_text_exit);
 }
 
 static void fb_syms_out(void *fbi, int x, int y, int dotsz, int stride, const char *text, int count)
@@ -131,8 +141,8 @@ static void fbprintf(int is_err, const char *format, ...)
   fb_text_out(buff);
 }
 
-#define msg(fmt, ...) fbprintf(0, fmt, #__VA_ARGS__)
-#define err(fmt, ...) fbprintf(1, fmt, #__VA_ARGS__)
+#define msg(fmt, ...) fbprintf(0, fmt, ##__VA_ARGS__)
+#define err(fmt, ...) fbprintf(1, fmt, ##__VA_ARGS__)
 
 static int id_elf(const char *fname)
 {
@@ -180,12 +190,12 @@ out:
   return ret;
 }
 
-static void dump_args(FILE *fout, int argc, char * const argv[])
+static void dump_args(FILE *fout, char * const argv[])
 {
   const char *p;
   int i;
 
-  for (i = 0; i < argc; i++) {
+  for (i = 0; argv[i] != NULL; i++) {
     if (i != 0)
       fputc(' ', fout);
     fputc('"', fout);
@@ -248,22 +258,42 @@ int main(int argc, char *argv[])
 {
   static const char out_script[] = "/tmp/ginge_conv.sh";
   char root_path[512], cwd[512];
+  char **argv_app = NULL;
   int have_cramfs = 0;
   int rerun_gp2xmenu = 1;
+  int quit_if_no_app = 0;
   FILE *fin, *fout;
-  int ret;
+  int i, ret;
 
-  if (argc < 2) {
-    err("usage: %s <script|program> [args]\n", argv[0]);
+  for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1] == '-'; i++) {
+    if (strcmp(argv[i], "--cleanup") == 0) {
+      // as loader may crash eny time, restore screen for the menu
+      host_video_init(NULL, 1);
+      host_video_finish();
+      quit_if_no_app = 1;
+      continue;
+    }
+    if (strcmp(argv[i], "--nomenu") == 0) {
+      rerun_gp2xmenu = 0;
+      continue;
+    }
+    if (strcmp(argv[i], "--") == 0) {
+      i++;
+      break;
+    }
+
+    fprintf(stderr, PFX "ignoring unknown option \"%s\"\n", argv[i]);
+  }
+
+  if (argc <= i) {
+    if (quit_if_no_app)
+      return 0;
+    err("usage: %s [opts] <script|program> [args]\n", argv[0]);
+    err("  --cleanup  - restore framebuffer state\n");
+    err("  --nomenu   - don't run menu on exit\n");
     return 1;
   }
-
-  if (strcmp(argv[1], "--cleanup") == 0) {
-    // as loader may crash eny time, restore screen for them menu
-    host_video_init(NULL, 0);
-    host_video_finish();
-    return 0;
-  }
+  argv_app = &argv[i];
 
   if (getcwd(cwd, sizeof(cwd)) == NULL) {
     err(PFX "failed to get cwd\n");
@@ -284,10 +314,10 @@ int main(int argc, char *argv[])
 
   fprintf(fout, "#!/bin/sh\n");
 
-  ret = id_elf(argv[1]);
+  ret = id_elf(argv_app[0]);
   if (ret == 1 || ret == 2) {
-    if (cmd_in_blacklist(argv[1])) {
-      fprintf(stderr, "blacklisted: %s\n", argv[1]);
+    if (cmd_in_blacklist(argv_app[0])) {
+      fprintf(stderr, "blacklisted: %s\n", argv_app[0]);
       goto no_in_script;
     }
   }
@@ -298,13 +328,13 @@ int main(int argc, char *argv[])
 
   case 1:
     fprintf(fout, WRAP_APP "%s%s ", root_path, LOADER_STATIC);
-    dump_args(fout, argc - 1, &argv[1]);
+    dump_args(fout, argv_app);
     fprintf(fout, "\n");
     goto no_in_script;
 
   case 2:
     fprintf(fout, WRAP_APP "%s%s \"%s\" ", root_path, LOADER_DYNAMIC, root_path);
-    dump_args(fout, argc - 1, &argv[1]);
+    dump_args(fout, argv_app);
     fprintf(fout, "\n");
     goto no_in_script;
 
@@ -313,7 +343,7 @@ int main(int argc, char *argv[])
   }
 
   // assume script
-  fin = fopen(argv[1], "r");
+  fin = fopen(argv_app[0], "r");
   if (fin == NULL)
     return 1;
 
@@ -423,6 +453,9 @@ pass:
 no_in_script:
 #ifdef WIZ
   fprintf(fout, "sync\n");
+  // since we don't know if loader manages to do proper cleanup,
+  // need to wait for it's threads to die
+  fprintf(fout, "sleep 1\n");
   fprintf(fout, "%sginge_prep --cleanup\n", root_path);
 #endif
   if (rerun_gp2xmenu) {
@@ -442,6 +475,7 @@ no_in_script:
   system("echo ---; cat /tmp/ginge_conv.sh; echo ---");
   chmod(out_script, S_IRWXU|S_IRWXG|S_IRWXO);
   chdir(cwd);
+  fb_text_exit();
   execlp(out_script, out_script, NULL);
   perror("run out_script");
 

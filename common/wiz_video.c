@@ -11,7 +11,7 @@
 #include "warm.h"
 
 static volatile unsigned short *memregs;
-static volatile unsigned long  *memregl;
+static volatile unsigned int   *memregl;
 int memdev = -1;
 
 #define FB_BUF_COUNT 4
@@ -84,12 +84,12 @@ static int vout_gp2x_init(int no_dblbuf)
 			fprintf(stderr, "could not make fb buferable.\n");
 	}
 
-	printf("  %p -> %08x\n", gp2x_screens[0], fb_paddr[0]);
+	// printf("  %p -> %08x\n", gp2x_screens[0], fb_paddr[0]);
 	for (i = 1; i < FB_BUF_COUNT; i++)
 	{
 		fb_paddr[i] = fb_paddr[i-1] + 320*240*2;
 		gp2x_screens[i] = (char *)gp2x_screens[i-1] + 320*240*2;
-		printf("  %p -> %08x\n", gp2x_screens[i], fb_paddr[i]);
+		// printf("  %p -> %08x\n", gp2x_screens[i], fb_paddr[i]);
 	}
 	fb_work_buf = 0;
 	g_screen_ptr = gp2x_screens[0];
@@ -155,11 +155,21 @@ static void vout_gp2x_set_palette(unsigned int *pal, int len)
 
 void vout_gp2x_finish(void)
 {
-	memregl[0x406C>>2] = fb_paddr[0];
-	memregl[0x4058>>2] |= 0x10;
-	close(fbdev);
+	if (memregl != NULL) {
+		if (memregl[0x4058>>2] & 0x10)
+			usleep(100000);
+		if (memregl[0x4058>>2] & 0x10)
+			printf("MLCCONTROL1 dirty? %08x %08x\n",
+				memregl[0x406C>>2], memregl[0x4058>>2]);
 
-	munmap((void *)memregs, 0x20000);
+		memregl[0x406C>>2] = fb_paddr[0];
+		memregl[0x4058>>2] |= 0x10;
+		munmap((void *)memregs, 0x20000);
+		memregs = NULL;
+		memregl = NULL;
+	}
+
+	close(fbdev);
 	close(memdev);
 
 	warm_finish();

@@ -15,3 +15,6 @@ swapon swapfile
 
 swapoff swapfile
 /sbin/rmmod warm 2> /dev/null
+
+cd /usr/gp2x/
+exec ./gp2xmenu

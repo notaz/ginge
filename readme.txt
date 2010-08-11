@@ -1,6 +1,6 @@
 
 GINGE - Ginge Is Not GP2X Emulator
-release 1
+release 2
 
 (C) notaz, 2010
 http://notaz.gp2x.de/
@@ -43,6 +43,17 @@ The menu is optional and can be replaced or bypassed completely. The only thing
 it does is running ginge_prep on GP2X .gpe program, ginge_prep handles the rest.
 
 
+Changelog
+---------
+
+r2
+* improved exit handling
+* Wiz: should now return to Wiz menu after gp2xmenu exit
+
+r1 - initial release
++ icons provided by Inder
+
+
 License
 -------
 
@@ -51,8 +62,9 @@ Source is available at http://notaz.gp2x.de/releases/ginge/gp2xmenu.tar.bz2
 
 Ginge may come with some libraries. Those libraries are unmodified copies
 of ones found in root filesystems in GP2X and Wiz and are included to more
-accurately reproduce environment on GP2X. Their source code may or may not be
-available, I do not have it nor did I use it.
+accurately reproduce environment found on GP2X. Their source code may or may
+not be available, I did not I use it, but whatever I found is mirrored here:
+http://notaz.gp2x.de/downloads/gp2x/src/410_all/
 
 Remaining portion is released under custom closed source license. It is not
 derived from gp2xmenu and is completely standalone, the menu is only included
@@ -64,7 +76,7 @@ modification, is permitted provided that the following conditions are met:
   * The program in any of it's forms is not sold or used as part of any
     commercial package, including pre-installed or included in any kind of
     portable device.
-  * It is not bundled or distributed with any GP2X program without respective
+  * It is not bundled and distributed with any GP2X program without respective
     program's author's permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
