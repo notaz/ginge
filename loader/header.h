@@ -17,6 +17,7 @@ void do_entry(unsigned long entry, void *stack_frame, int stack_frame_cnt, void 
 struct dev_fd_t {
   const char *name;
   int fd;
+  void (*open_cb)(int fd);
 };
 extern struct dev_fd_t emu_interesting_fds[];
 enum {
@@ -45,6 +46,7 @@ int   emu_do_ioctl(int fd, int request, void *argp);
 int   emu_read_gpiodev(void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);
 int   emu_do_system(const char *command);
+int   emu_do_execve(const char *filename, char *const argv[], char *const envp[]);
 
 int   host_init(void);
 int   host_read_btns(void);

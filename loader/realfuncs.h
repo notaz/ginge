@@ -35,6 +35,9 @@ int   real_chdir(const char *path);
 #define system real_system
 #define execl real_execl
 #define execlp real_execlp
+#define execle real_execle
+#define execv real_execv
+#define execvp real_execvp
 #define execve real_execve
 #define chdir real_chdir
 

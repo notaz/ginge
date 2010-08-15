@@ -141,7 +141,14 @@ static void vout_gp2x_set_mode(int bpp, int rot)
 	memregl[0x4058>>2] = r;
 }
 
-static void vout_gp2x_set_palette(unsigned int *pal, int len)
+static void vout_gp2x_set_palette16(unsigned short *pal, int len)
+{
+	int i;
+	for (i = 0; i < len; i++)
+		memregl[0x4070>>2] = (i << 24) | pal[i];
+}
+
+static void vout_gp2x_set_palette32(unsigned int *pal, int len)
 {
 	/* pollux palette is 16bpp only.. */
 	int i;

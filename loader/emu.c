@@ -87,9 +87,10 @@ static struct {
 #define CTRL_TRANSPARENCYENB    (1 << 11)
 
 static struct {
+  // mmsp2
   u16 mlc_stl_cntl;
   union {
-    u32 mlc_stl_adr;
+    u32 mlc_stl_adr; // mlcaddress for pollux
     struct {
       u16 mlc_stl_adrl;
       u16 mlc_stl_adrh;
@@ -101,12 +102,26 @@ static struct {
     u32 mlc_stl_pallt_d32[256];
   };
 
+  // pollux
+  u32 mlccontrol;
+  u16 mlcpalette[256];
+
   // state
   void *umem;
   u32 old_mlc_stl_adr;
-  u32 btn_state; // as seen through /dev/GPIO
-  u32 dirty_pal:1;
+  u32 btn_state; // as seen through /dev/GPIO: 0PVdVu YXBA RLSeSt 0Ri0Dn 0Le0Up
+  struct {
+    u32 width, height;
+    u32 stride;
+    u32 bpp;
+    u32 dirty_pal:2;
+  } v;
 } mmsp2;
+#define pollux mmsp2 // so that code doesn't look that weird
+enum {
+  DIRTY_PAL_MMSP2 = 1,
+  DIRTY_PAL_POLLUX = 2,
+};
 
 
 #if defined(LOG_IO) || defined(LOG_IO_UNK)
@@ -267,14 +282,17 @@ bad_blit:
 }
 
 // FIXME: pass real dimensions to blitters
-static void mlc_flip(void *src, int bpp)
+static void mlc_flip(void *src, int bpp, int stride)
 {
   static int old_bpp;
 
   // only pass pal to host if it's dirty
-  if (bpp <= 8 && mmsp2.dirty_pal) {
-    host_video_update_pal(mmsp2.mlc_stl_pallt_d32);
-    mmsp2.dirty_pal = 0;
+  if (bpp <= 8 && mmsp2.v.dirty_pal) {
+    if (mmsp2.v.dirty_pal == DIRTY_PAL_MMSP2)
+      host_video_update_pal32(mmsp2.mlc_stl_pallt_d32);
+    else
+      host_video_update_pal16(mmsp2.mlcpalette);
+    mmsp2.v.dirty_pal = 0;
   }
 
   if (bpp != old_bpp) {
@@ -284,15 +302,15 @@ static void mlc_flip(void *src, int bpp)
 
   switch (bpp) {
   case  4:
-    host_video_blit4(src, 320, 240);
+    host_video_blit4(src, 320, 240, stride);
     break;
 
   case  8:
-    host_video_blit8(src, 320, 240);
+    host_video_blit8(src, 320, 240, stride);
     break;
 
   case 16:
-    host_video_blit16(src, 320, 240);
+    host_video_blit16(src, 320, 240, stride);
     break;
 
   case 24:
@@ -315,6 +333,7 @@ static void *fb_sync_thread(void *arg)
 {
   int invalid_fb_addr = 1;
   int manual_refresh = 0;
+  int frame_counter = 0;
   struct timespec ts;
   int ret, wait_ret;
 
@@ -331,7 +350,6 @@ static void *fb_sync_thread(void *arg)
 
   while (1) {
     u8 *gp2x_fb, *gp2x_fb_end;
-    int mode, bpp;
 
     ret =  pthread_mutex_lock(&fb_mutex);
     wait_ret = pthread_cond_timedwait(&fb_cond, &fb_mutex, &ts);
@@ -340,16 +358,16 @@ static void *fb_sync_thread(void *arg)
     if (ret != 0) {
       err("fb_thread: mutex error: %d\n", ret);
       sleep(1);
-      continue;
+      goto check_keys;
     }
     if (wait_ret != 0 && wait_ret != ETIMEDOUT) {
       err("fb_thread: cond error: %d\n", wait_ret);
       sleep(1);
-      continue;
+      goto check_keys;
     }
     if (fb_sync_thread_paused) {
       ts_add_nsec(ts, 100000000);
-      continue;
+      goto check_keys;
     }
 
     if (wait_ret != ETIMEDOUT) {
@@ -365,11 +383,8 @@ static void *fb_sync_thread(void *arg)
       manual_refresh = 0;
     }
 
-    mode = (mmsp2.mlc_stl_cntl >> 9) & 3;
-    bpp = mode ? mode * 8 : 4;
-
     gp2x_fb = uppermem_lookup(mmsp2.mlc_stl_adr, &gp2x_fb_end);
-    if (gp2x_fb == NULL || gp2x_fb + 320*240 * bpp / 8 > gp2x_fb_end) {
+    if (gp2x_fb == NULL || gp2x_fb + 320*240 * mmsp2.v.bpp / 8 > gp2x_fb_end) {
       if (!invalid_fb_addr) {
         err("fb_thread: %08x is out of range\n", mmsp2.mlc_stl_adr);
         invalid_fb_addr = 1;
@@ -377,7 +392,17 @@ static void *fb_sync_thread(void *arg)
       continue;
     }
 
-    mlc_flip(gp2x_fb, bpp);
+    invalid_fb_addr = 0;
+    mlc_flip(gp2x_fb, mmsp2.v.bpp, mmsp2.v.stride);
+
+    frame_counter++;
+    if (frame_counter & 0x0f)
+      continue;
+
+check_keys:
+    // this is to check for kill key, in case main thread hung
+    // or something else went wrong.
+    pollux.btn_state = host_read_btns();
   }
 }
 
@@ -392,6 +417,50 @@ static void fb_thread_pause(void)
 static void fb_thread_resume(void)
 {
   fb_sync_thread_paused = 0;
+}
+
+static u32 xread32_io_cmn(u32 a, u32 *handled)
+{
+  u32 d = 0;
+
+  *handled = 1;
+  switch (a) {
+  // Wiz stuff
+  case 0x402c: // MLCVSTRIDE0
+  case 0x4060: // MLCVSTRIDE1
+    d = pollux.v.stride;
+    break;
+  case 0x4038: // MLCADDRESS0
+  case 0x406c: // MLCADDRESS1
+    d = pollux.mlc_stl_adr;
+    break;
+  // wiz_lib reads:
+  //  ???? ???? YXBA DURiLe ???? VdVuMS LR?? ????
+  // |     GPIOC[31:16]    |    GPIOB[31:16]     |
+  case 0xa058: // GPIOBPAD
+    d =   pollux.btn_state & 0x0300;
+    d |= (pollux.btn_state >> 3) & 0x0080;
+    d |= (pollux.btn_state >> 5) & 0x0040;
+    d |= (pollux.btn_state >> 6) & 0x0c00;
+    d <<= 16;
+    d = ~d;
+    break;
+  case 0xa098: // GPIOCPAD
+    pollux.btn_state = host_read_btns();
+    d =  (pollux.btn_state >> 8) & 0x00f0;
+    d |= (pollux.btn_state >> 1) & 0x0008;
+    d |= (pollux.btn_state << 2) & 0x0004;
+    d |= (pollux.btn_state >> 5) & 0x0002;
+    d |= (pollux.btn_state >> 2) & 0x0001;
+    d <<= 16;
+    d = ~d;
+    break;
+  default:
+    *handled = 0;
+    break;
+  }
+
+  return d;
 }
 
 static u32 xread8(u32 a)
@@ -414,8 +483,8 @@ static u32 xread16(u32 a)
       d = 0x9407;
       break;
     // minilib reads as:
-    //  0000 P000 VuVd00 0000 YXBA RLSeSt 0R0D 0L0U
-    // |        GPIOD        |GPIOC[8:15]|GPIOM[0:7]|
+    //  0000 P000 VuVd00 0000 YXBA RLSeSt 0Ri0D 0Le0U
+    // |        GPIOD        |GPIOC[8:15]|GPIOM[0:7] |
     // /dev/GPIO:
     //             ... 0PVdVu ...
     case 0x1184: // GPIOC
@@ -457,13 +526,19 @@ static u32 xread16(u32 a)
     case 0x2958:
       d = mmsp2.mlc_stl_pallt_a;
       break;
+
     default:
-      goto unh;
+      d = xread32_io_cmn(a_, &t);
+      if (!t)
+        goto unk;
+      if (!(a_ & 2))
+        d >>= 16;
+      break;
     }
     goto out;
   }
 
-unh:
+unk:
   if (a == old_a) {
     d = fudge;
     fudge = ~fudge;
@@ -484,6 +559,7 @@ static u32 xread32(u32 a)
     u32 a_ = a & 0xffff;
     struct timespec ts;
     u64 t64;
+    u32 t;
 
     switch (a_) {
     case 0x0a00: // TCOUNT, 1/7372800s
@@ -493,7 +569,14 @@ static u32 xread32(u32 a)
       t64 *= 31665935;
       d = t64 >> 32;
       break;
+
+    default:
+      d = xread32_io_cmn(a_, &t);
+      if (!t)
+        goto unh;
+      break;
     }
+    goto out;
   }
   if ((a & 0xfff00000) == 0x7f100000) {
     u32 *bl = &blitter.dstctrl;
@@ -505,6 +588,8 @@ static u32 xread32(u32 a)
       goto out;
     }
   }
+
+unh:
   iolog_unh("r32", a, d, 32);
 
 out:
@@ -524,31 +609,38 @@ static void xwrite16(u32 a, u32 d)
   if ((a & 0xfff00000) == 0x7f000000) {
     u32 a_ = a & 0xffff;
     switch (a_) {
-    case 0x28da:
-      mmsp2.mlc_stl_cntl = d | 0xaa;
-      break;
-    case 0x290e:
-    case 0x2910:
-      // odd addresses don't affect LCD. What about TV?
-      return;
-    case 0x2912:
-      mmsp2.mlc_stl_adrl = d;
-      return;
-    case 0x2914:
-      mmsp2.mlc_stl_adrh = d;
-      if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr)
-        // ask for refresh
-        pthread_cond_signal(&fb_cond);
-      mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
-      return;
-    case 0x2958:
-      mmsp2.mlc_stl_pallt_a = d & 0x1ff;
-      return;
-    case 0x295a:
-      mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++] = d;
-      mmsp2.mlc_stl_pallt_a &= 0x1ff;
-      mmsp2.dirty_pal = 1;
-      return;
+      case 0x28da: {
+        int mode;
+        mmsp2.mlc_stl_cntl = d | 0xaa;
+        mode = (d >> 9) & 3;
+        mmsp2.v.bpp = mode ? mode * 8 : 4;
+        break;
+      }
+      case 0x290c:
+        mmsp2.v.stride = d;
+        return;
+      case 0x290e:
+      case 0x2910:
+        // odd addresses don't affect LCD. What about TV?
+        return;
+      case 0x2912:
+        mmsp2.mlc_stl_adrl = d;
+        return;
+      case 0x2914:
+        mmsp2.mlc_stl_adrh = d;
+        if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr)
+          // ask for refresh
+          pthread_cond_signal(&fb_cond);
+        mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
+        return;
+      case 0x2958:
+        mmsp2.mlc_stl_pallt_a = d & 0x1ff;
+        return;
+      case 0x295a:
+        mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++] = d;
+        mmsp2.mlc_stl_pallt_a &= 0x1ff;
+        mmsp2.v.dirty_pal = DIRTY_PAL_MMSP2;
+        return;
     }
   }
   iolog_unh("w16", a, d, 16);
@@ -558,6 +650,39 @@ static void xwrite32(u32 a, u32 d)
 {
   iolog("w32", a, d, 32);
 
+  if ((a & 0xfff00000) == 0x7f000000) {
+    u32 a_ = a & 0xffff;
+    switch (a_) {
+    // Wiz
+    case 0x4024: // MLCCONTROL0
+    case 0x4058: // MLCCONTROL1
+      pollux.mlccontrol = d;
+      if (!(d & 0x20))
+        return; // layer not enabled
+      if ((d >> 16) == 0x443A)
+        pollux.v.bpp = 8;
+      else
+        pollux.v.bpp = 16;
+      return;
+    case 0x402c: // MLCVSTRIDE0
+    case 0x4060: // MLCVSTRIDE1
+      pollux.v.stride = d;
+      return;
+    case 0x4038: // MLCADDRESS0
+    case 0x406c: // MLCADDRESS1
+      pollux.mlc_stl_adr = d;
+      if (d != mmsp2.old_mlc_stl_adr)
+        // ask for refresh
+        pthread_cond_signal(&fb_cond);
+      mmsp2.old_mlc_stl_adr = d;
+      return;
+    case 0x403c: // MLCPALETTE0
+    case 0x4070: // MLCPALETTE1
+      pollux.mlcpalette[d >> 24] = d;
+      pollux.v.dirty_pal = DIRTY_PAL_POLLUX;
+      return;
+    }
+  }
   if ((a & 0xfff00000) == 0x7f100000) {
     u32 *bl = &blitter.dstctrl;
     u32 a_ = a & 0xfff;
@@ -843,9 +968,14 @@ void emu_init(void *map_bottom)
   }
   pthread_detach(tid);
 
-  // mmsp2 defaults
+  // defaults
   mmsp2.mlc_stl_adr = 0x03101000; // fb2 is at 0x03381000
   mmsp2.mlc_stl_cntl = 0x4ab; // 16bpp, region 1 active
+  mmsp2.v.width = 320;
+  mmsp2.v.height = 240;
+  mmsp2.v.stride = 320*2;
+  mmsp2.v.bpp = 16;
+  mmsp2.v.dirty_pal = 1;
 
   sigemptyset(&segv_action.sa_mask);
   sigaction(SIGSEGV, &segv_action, NULL);
@@ -865,21 +995,16 @@ int emu_read_gpiodev(void *buf, int count)
   return count;
 }
 
-struct dev_fd_t emu_interesting_fds[] = {
-  [IFD_SOUND] = { "/dev/dsp", -1 },
-  { NULL, 0 },
-};
-
 static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
   u8 *umem, *umem_end;
 
   // SoC regs
-  if ((offset & ~0xffff) == 0xc0000000) {
+  if ((offset & ~0x1ffff) == 0xc0000000) {
     return mmap((void *)0x7f000000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
-  // blitter
+  // MMSP2 blitter
   if ((offset & ~0xffff) == 0xe0020000) {
     return mmap((void *)0x7f100000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
@@ -916,6 +1041,21 @@ void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int
   return MAP_FAILED;
 }
 
+static void emu_sound_open(int fd)
+{
+#ifdef PND
+  int ret, frag;
+
+  // set default buffer size to 16 * 1K
+  frag = (16<<16) | 10; // 16K
+  ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
+  if (ret != 0) {
+    err("snd ioctl SETFRAGMENT %08x: ", frag);
+    perror(NULL);
+  }
+#endif
+}
+
 static int emu_sound_ioctl(int fd, int request, void *argp)
 {
   int *arg = argp;
@@ -930,24 +1070,48 @@ static int emu_sound_ioctl(int fd, int request, void *argp)
   /* People set strange frag settings on GP2X, which even manage
    * to break audio on pandora (causes writes to fail).
    * Catch this and set to something that works. */
-  if (request == SNDCTL_DSP_SPEED) {
-    int ret, bsize, frag;
+  switch(request) {
+    case SNDCTL_DSP_SETFRAGMENT: {
+      int ret, bsize, frag, frag_cnt;
+      if (arg == NULL)
+        break;
 
-    // ~4ms. gpSP wants small buffers or else it stutters
-    // because of it's audio thread sync stuff
-    bsize = *arg / 250 * 4;
-    for (frag = 0; bsize; bsize >>= 1, frag++)
-      ;
+      frag = *arg & 0xffff;
+      frag_cnt = *arg >> 16;
+      bsize = frag_cnt << frag;
+      if (frag < 10 || bsize < 4096*4 || bsize > 4096*4*2) {
+        /*
+         * ~4ms. gpSP wants small buffers or else it stutters
+         * because of it's audio thread sync stuff
+         * XXX: hardcoding, as low samplerates will result in small fragment size,
+         * which itself causes ALSA stall and hangs the program.
+         * Also some apps change samplerate without reopening /dev/dsp,
+         * which causes ALSA to reject SNDCTL_DSP_SETFRAGMENT.
+         */
+        bsize = 44100 / 250 * 4;
 
-    frag |= 16 << 16;       // fragment count
-    ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
-    if (ret != 0) {
-      err("snd ioctl SETFRAGMENT %08x: ", frag);
-      perror(NULL);
+        for (frag = 0; bsize; bsize >>= 1, frag++)
+          ;
+
+        frag_cnt = 16;
+      }
+
+      frag |= frag_cnt << 16;
+      ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
+      if (ret != 0) {
+        err("snd ioctl SETFRAGMENT %08x: ", frag);
+        perror(NULL);
+      }
+      // indicate success even if we fail (because of ALSA mostly),
+      // things like MikMod will bail out otherwise.
+      return 0;
     }
+    case SNDCTL_DSP_SYNC:
+      // Franxis tends to use sync/write loops, bad idea under ALSA
+      return 0;
+    default:
+      break;
   }
-  else if (request == SNDCTL_DSP_SETFRAGMENT)
-    return 0;
 
   return ioctl(fd, request, argp);
 }
@@ -1022,6 +1186,11 @@ fail:
   return -1;
 }
 
+struct dev_fd_t emu_interesting_fds[] = {
+  [IFD_SOUND] = { "/dev/dsp", -1, emu_sound_open },
+  { NULL, 0, NULL },
+};
+
 static const struct {
   const char *from;
   const char *to;
@@ -1052,13 +1221,21 @@ static const char *wrap_path(const char *path)
   return path;
 }
 
+static void wrap_path_free(const char *w_path, const char *old_path)
+{
+  if (w_path != old_path)
+    free((void *)w_path);
+}
+
 void *emu_do_fopen(const char *path, const char *mode)
 {
-  const char *w_path = wrap_path(path);
+  const char *w_path;
   FILE *ret;
+
+  w_path = wrap_path(path);
   ret = fopen(w_path, mode);
-  if (w_path != path)
-    free((void *)w_path);
+  wrap_path_free(w_path, path);
+
   return ret;
 }
 
@@ -1084,8 +1261,7 @@ int emu_do_system(const char *command)
 
   p2 = wrap_path(command);
   snprintf(p, sizeof(tmp_path) - (p - tmp_path), " --nomenu %s", p2);
-  if (p2 != command)
-    free((void *)p2);
+  wrap_path_free(p2, command);
 
   dbg("system: \"%s\"\n", tmp_path);
 
@@ -1093,6 +1269,45 @@ int emu_do_system(const char *command)
   fb_thread_pause();
   ret = system(tmp_path);
   fb_thread_resume();
+  return ret;
+}
+
+int emu_do_execve(const char *filename, char *const argv[], char *const envp[])
+{
+  const char **new_argv;
+  char *prep_path;
+  int i, ret, argc;
+
+  if (filename == NULL)
+    return -1;
+
+  if (strstr(filename, "/gp2xmenu") != NULL)
+    exit(0);
+
+  for (i = 0; argv[i] != NULL; i++)
+    ;
+  argc = i + 1;
+
+  new_argv = calloc(argc + 2, sizeof(new_argv[0]));
+  if (new_argv == NULL)
+    return -1;
+
+  prep_path = malloc(512);
+  if (prep_path == NULL)
+    return -1;
+
+  make_local_path(prep_path, 512, "ginge_prep");
+  new_argv[0] = prep_path;
+  new_argv[1] = "--nomenu";
+  new_argv[2] = wrap_path(filename);
+
+  if (argv[0] != NULL)
+    for (i = 1; argv[i] != NULL; i++)
+      new_argv[i + 2] = argv[i];
+
+  dbg("execve \"%s\" %s \"%s\"\n", new_argv[0], new_argv[1], new_argv[2]);
+  ret = execve(new_argv[0], (char **)new_argv, envp);
+  perror("execve");
   return ret;
 }
 

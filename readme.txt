@@ -1,6 +1,6 @@
 
 GINGE - Ginge Is Not GP2X Emulator
-release 2
+release 3
 
 (C) notaz, 2010
 http://notaz.gp2x.de/
@@ -9,13 +9,14 @@ http://notaz.gp2x.de/
 About
 -----
 
-Ginge is an application that can run many GP2X F100/F200 games on other ARM
-Linux platforms, which currently includes Wiz. It is not a full hardware
-emulator like MAME, PicoDrive or similar, it does not emulate the CPU. It can
-be considered as compatibility layer similar to Wine on PC Linux, however it
-does emulate small portion of MMSP2 system-on-chip. It operates by hooking
-certain system calls and using realtime patching of code that accesses memory
-mapped hardware directly.
+Ginge is an application that can run many GP2X F100/F200, Wiz games and
+programs on other ARM Linux platforms, which currently includes Pandora
+and Wiz itself. It is not a full hardware emulator like MAME, PicoDrive or
+similar, it does not emulate the CPU. It can be considered as compatibility
+layer similar to Wine on PC Linux, however it does emulate small portion of
+MMSP2 and Pollux system-on-chips. It operates by hooking certain system calls
+and using realtime patching of code that accesses memory mapped hardware
+directly.
 
 
 Usage
@@ -25,6 +26,14 @@ Ginge comes with a launcher that is started when you run Ginge. The launcher
 can then be used to start GP2X software, which will either run if it's
 compatible, or just return back to the menu if it is not. In some cases it
 might hang though.
+
+Keys are mapped to corresponding keys on both pandora and Wiz, except:
+
+Key              Pandora   Wiz
+Stick Push       1         unmapped
+Volume up/down   '.', ','  Volume up/down
+
+On pandora pressing 'q' will exit the menu or try to kill current application.
 
 
 Structure
@@ -45,6 +54,12 @@ it does is running ginge_prep on GP2X .gpe program, ginge_prep handles the rest.
 
 Changelog
 ---------
+
+r3
+* improved exec handling, mostly for gpecomp.
++ added preliminary Wiz support, pcsx4all works.
+* Wiz: since some stuff is written to /tmp, mount tmpfs there when starting
+  to avoid wearing down flash.
 
 r2
 * improved exit handling

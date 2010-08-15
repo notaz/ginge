@@ -33,6 +33,9 @@ static const struct dev_fd_t takeover_devs[] = {
   { "/dev/mmuhack", FAKEDEV_MMUHACK },
   { "/dev/tty",     -1 }, // XXX hmh..
   { "/dev/tty0",    FAKEDEV_TTY0 },
+#ifdef PND
+  { "/dev/input/event*", -1 }, // hide for now, may cause dupe events
+#endif
 };
 
 static int w_open(const char *pathname, int flags, mode_t mode)
@@ -40,7 +43,17 @@ static int w_open(const char *pathname, int flags, mode_t mode)
   int i, ret;
 
   for (i = 0; i < ARRAY_SIZE(takeover_devs); i++) {
-    if (strcmp(pathname, takeover_devs[i].name) == 0) {
+    const char *p, *oname;
+    int len;
+
+    oname = takeover_devs[i].name;
+    p = strchr(oname, '*');
+    if (p != NULL)
+      len = p - oname;
+    else
+      len = strlen(oname) + 1;
+
+    if (strncmp(pathname, oname, len) == 0) {
       ret = takeover_devs[i].fd;
       break;
     }
@@ -51,8 +64,11 @@ static int w_open(const char *pathname, int flags, mode_t mode)
 
   if (ret >= 0) {
     for (i = 0; emu_interesting_fds[i].name != NULL; i++) {
-      if (strcmp(pathname, emu_interesting_fds[i].name) == 0) {
-        emu_interesting_fds[i].fd = ret;
+      struct dev_fd_t *eifd = &emu_interesting_fds[i];
+      if (strcmp(pathname, eifd->name) == 0) {
+        eifd->fd = ret;
+        if (eifd->open_cb != NULL)
+          eifd->open_cb(ret);
         break;
       }
     }
@@ -150,18 +166,37 @@ static UNUSED int w_system(const char *command)
   return ret;
 }
 
-// 4 functions bellow are efforts to prevent gp2xmenu from being started..
+extern char **environ;
+
 static UNUSED int w_execl(const char *path, const char *arg, ...)
 {
   // don't allow exec (for now)
   strace("execl(%s, %s, ...) = ?\n", path, arg);
-  exit(0);
+  exit(1);
 }
 
 static UNUSED int w_execlp(const char *file, const char *arg, ...)
 {
   strace("execlp(%s, %s, ...) = ?\n", file, arg);
-  exit(0);
+  exit(1);
+}
+
+static UNUSED int w_execle(const char *path, const char *arg, ...)
+{
+  strace("execle(%s, %s, ...) = ?\n", path, arg);
+  exit(1);
+}
+
+static UNUSED int w_execv(const char *path, char *const argv[])
+{
+  strace("execv(%s, %p) = ?\n", path, argv);
+  return emu_do_execve(path, argv, environ);
+}
+
+static UNUSED int w_execvp(const char *file, char *const argv[])
+{
+  strace("execvp(%s, %p) = ?\n", file, argv);
+  return emu_do_execve(file, argv, environ);
 }
 
 // static note: this can't safely return because of the way it's patched in
@@ -170,9 +205,7 @@ static UNUSED int w_execve(const char *filename, char *const argv[],
                   char *const envp[])
 {
   strace("execve(%s, %p, %p) = ?\n", filename, argv, envp);
-  if (filename != NULL && strstr(filename, "/gp2xmenu") != NULL)
-    exit(0);
-  return execve(filename, argv, envp);
+  return emu_do_execve(filename, argv, envp);
 }
 
 static int w_chdir(const char *path)
@@ -197,6 +230,9 @@ static int w_chdir(const char *path)
 #undef system
 #undef execl
 #undef execlp
+#undef execle
+#undef execv
+#undef execvp
 #undef execve
 #undef chdir
 
@@ -223,6 +259,9 @@ MAKE_WRAP_SYM(tcsetattr);
 MAKE_WRAP_SYM(system);
 MAKE_WRAP_SYM_N(execl);
 MAKE_WRAP_SYM_N(execlp);
+MAKE_WRAP_SYM_N(execle);
+MAKE_WRAP_SYM_N(execv);
+MAKE_WRAP_SYM_N(execvp);
 MAKE_WRAP_SYM(execve);
 MAKE_WRAP_SYM(chdir);
 typeof(mmap) mmap2 __attribute__((alias("w_mmap")));

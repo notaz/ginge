@@ -75,6 +75,7 @@ static void ginge_init(void)
   // remove self from preload, further commands (from system() and such)
   // will be handled by ginge_prep.
   unsetenv("LD_PRELOAD");
+  unsetenv("LD_LIBRARY_PATH");
 
   emu_init((void *)lowest_segment);
 }

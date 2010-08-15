@@ -4,11 +4,14 @@ pnd_make=$HOME/dev/pnd/src/pandora-libraries/testdata/scripts/pnd_make.sh
 
 set -e
 
-dist/make_cmn.sh out_pnd
-mkdir -p out_pnd/tools
-cp dist/ginge.sh out_pnd/
-cp dist/ginge_dyn_eabi.sh out_pnd/ginge_dyn.sh
-cp tools/cramfsck_eabi out_pnd/tools/cramfsck
-cp -r lib out_pnd/
+out=out_pnd
 
-$pnd_make -p ginge.pnd -d out_pnd -x dist/ginge.pxml -c -i dist/ginge60.png
+dist/make_cmn.sh ${out}
+mkdir -p ${out}/tools
+cp dist/ginge.sh ${out}/
+cp dist/ginge_dyn_eabi.sh ${out}/ginge_dyn.sh
+cp prep/ginge_prep_pnd ${out}/ginge_prep
+cp tools/cramfsck_eabi ${out}/tools/cramfsck
+cp -r lib ${out}/
+
+$pnd_make -p ginge.pnd -d ${out} -x dist/ginge.pxml -c -i dist/ginge60.png

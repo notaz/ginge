@@ -48,6 +48,7 @@ int main(int argc, char *argv[])
 	if (argc == 1000)
 		fork();
 	chdir("wuhahaha!");
+	usleep(1);
 //	tcgetattr(-1, NULL);
 //	tcsetattr(-1, 0, NULL);
 

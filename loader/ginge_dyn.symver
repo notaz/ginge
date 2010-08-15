@@ -12,6 +12,9 @@ global:
 	system;
 	execl;
 	execlp;
+	execle;
+	execv;
+	execvp;
 	execve;
 	chdir;
 

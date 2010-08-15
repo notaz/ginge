@@ -76,7 +76,7 @@ static const struct {
   { BTN_SELECT,     GP2X_SELECT },
   { KEY_COMMA,      GP2X_VOL_DOWN },
   { KEY_DOT,        GP2X_VOL_UP },
-  { KEY_Q,          GP2X_PUSH },
+  { KEY_1,          GP2X_PUSH },
 };
 
 int host_read_btns(void)
@@ -102,6 +102,15 @@ int host_read_btns(void)
 
     if (ev.type != EV_KEY)
       continue;
+
+    if (ev.code == KEY_Q && ev.value) {
+      // exit() might not be enough because loader and app data is out of sync,
+      // and other threads (which are really processes) might not exit properly.
+      system("killall ginge_sloader");
+      usleep(300000);
+      system("killall -9 ginge_sloader");
+      exit(1);
+    }
 
     for (i = 0; i < sizeof(key_map) / sizeof(key_map[0]); i++) {
       if (key_map[i].key != ev.code)
