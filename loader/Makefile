@@ -25,17 +25,19 @@ endif
 ifdef PND
 CFLAGS += -DPND
 OBJ += host_pnd.o
+TAG = _pnd
 endif
 ifdef WIZ
 CFLAGS += -DWIZ
 OBJ += host_wiz.o wiz_video_arm.o
+TAG = _wiz
 endif
 
 vpath %.c = ../common/
 vpath %.s = ../common/
 
-TARGET_S = ginge_sloader
-TARGET_D = ginge_dyn
+TARGET_S = ginge_sloader$(TAG)
+TARGET_D = ginge_dyn$(TAG)
 
 OBJ += emu.o host_fb.o cmn.o
 OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
@@ -44,7 +46,7 @@ OBJ_D += $(OBJ) dl.o
 all: $(TARGET_S) $(TARGET_D)
 
 $(TARGET_S): LDFLAGS += -Wl,-T script_$(ARCH).lds
-$(TARGET_D): LDFLAGS += -ldl -Wl,--version-script=$(TARGET_D).symver
+$(TARGET_D): LDFLAGS += -ldl -Wl,--version-script=ginge_dyn.symver
 
 $(TARGET_S): $(OBJ_S)
 	$(CC) -o $@ $^ -static $(LDFLAGS)

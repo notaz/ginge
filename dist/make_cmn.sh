@@ -2,16 +2,12 @@
 
 set -e
 
-if [ -z "$1" ]; then
-	echo "usage: $0 <out_dir>"
-	exit 1
-fi
-
-rm -rf $1
-mkdir $1
-cp gp2xmenu/gp2xmenu $1/
-cp -r gp2xmenu/gp2xmenu_data $1/
-cp loader/ginge_dyn $1/
-cp loader/ginge_sloader $1/
-cp readme.txt $1/
+rm -rf ${out}
+mkdir ${out}
+cp gp2xmenu/gp2xmenu${tag} ${out}/gp2xmenu
+cp -r gp2xmenu/gp2xmenu_data ${out}/
+cp prep/ginge_prep${tag} ${out}/ginge_prep
+cp loader/ginge_dyn${tag} ${out}/ginge_dyn
+cp loader/ginge_sloader${tag} ${out}/ginge_sloader
+cp readme.txt ${out}/
 
