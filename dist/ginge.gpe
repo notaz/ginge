@@ -6,6 +6,7 @@ unset LD_PRELOAD
 /sbin/insmod ./tools/warm_2.6.24.ko
 
 # we might write something to /tmp, no need to write to flash
+# FIXME: doesn't seem to work, tmpfs broken in Wiz kernel?
 if ! grep -q '/tmp' /proc/mounts; then
 	mount -t tmpfs none /tmp
 fi
@@ -13,12 +14,14 @@ fi
 # theoretically GP2X apps can make use of more RAM, because
 # Wiz has 2.6 kernel (larger memory requirements) and larger
 # reserved areas, so we mount some swap here just in case.
-mkswap swapfile
-swapon swapfile
+
+# FIXME: doesn't work too, causes more problems than resolves
+#mkswap swapfile
+#swapon swapfile
 
 ./gp2xmenu --view-game
 
-swapoff swapfile
+#swapoff swapfile
 umount /tmp
 /sbin/rmmod warm 2> /dev/null
 
