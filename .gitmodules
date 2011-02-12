@@ -1,0 +1,3 @@
+[submodule "common/warm"]
+	path = common/warm
+	url = git://notaz.gp2x.de/~notaz/warm.git

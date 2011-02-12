@@ -11,7 +11,7 @@ static int host_stride;
 
 #if defined(PND)
 
-#include "fbdev.c"
+#include "linux/fbdev.c"
 
 static struct vout_fbdev *fbdev;
 static unsigned short host_pal[256];
@@ -31,6 +31,7 @@ int host_video_init(int *stride, int no_dblbuf)
   if (fbdev_name == NULL)
     fbdev_name = "/dev/fb1";
 
+  w = h = 0;
   fbdev = vout_fbdev_init(fbdev_name, &w, &h, no_dblbuf);
   if (fbdev == NULL)
     return -1;
@@ -116,7 +117,7 @@ void host_video_blit16(const unsigned short *src, int w, int h, int stride)
 
 #elif defined(WIZ)
 
-#include "warm.c"
+#include "warm/warm.c"
 #include "wiz_video.c"
 
 void *host_video_flip(void)

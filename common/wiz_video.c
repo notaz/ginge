@@ -8,7 +8,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <linux/fb.h>
-#include "warm.h"
+#include "warm/warm.h"
 
 static volatile unsigned short *memregs;
 static volatile unsigned int   *memregl;
