@@ -961,13 +961,15 @@ void emu_init(void *map_bottom)
     exit(1);
   }
 
-#ifdef WIZ
-  // we are short on memmory on Wiz, need special handling
-  extern void *host_mmap_upper(void);
-  mmsp2.umem = host_mmap_upper();
-#else
+  // TODO: check if this really fails on Wiz..
   mmsp2.umem = mmap(NULL, 0x2000000, PROT_READ|PROT_WRITE|PROT_EXEC,
                     MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+#ifdef WIZ
+  if (mmsp2.umem == MAP_FAILED) {
+    // we are short on memmory on Wiz, need special handling
+    extern void *host_mmap_upper(void);
+    mmsp2.umem = host_mmap_upper();
+  }
 #endif
   if (mmsp2.umem == MAP_FAILED) {
     perror(PFX "mmap upper mem");
