@@ -12,6 +12,7 @@
 
 static volatile unsigned short *memregs;
 static volatile unsigned int   *memregl;
+int probably_caanoo;
 int memdev = -1;
 
 #define FB_BUF_COUNT 4
@@ -67,6 +68,8 @@ static int vout_gp2x_init(int no_dblbuf)
 
 	printf("framebuffer: \"%s\" @ %08lx\n", fbfix.id, fbfix.smem_start);
 	fb_paddr[0] = fbfix.smem_start;
+	probably_caanoo = fb_paddr[0] >= 0x4000000;
+	printf("looking like Caanoo? %s.\n", probably_caanoo ? "yes" : "no");
 
 	gp2x_screens[0] = mmap(0, 320*240*2*FB_BUF_COUNT, PROT_READ|PROT_WRITE,
 			MAP_SHARED, memdev, fb_paddr[0]);
@@ -106,6 +109,9 @@ static void vout_gp2x_set_mode(int bpp, int rot)
 	int code = 0, bytes = 2;
 	unsigned int r;
 	int ret;
+
+	if (probably_caanoo)
+		rot = 0;
 
 	rot_cmd[0] = rot ? 6 : 5;
 	ret = ioctl(fbdev, _IOW('D', 90, int[2]), rot_cmd);

@@ -32,7 +32,7 @@ int host_video_init(int *stride, int no_dblbuf)
     fbdev_name = "/dev/fb1";
 
   w = h = 0;
-  fbdev = vout_fbdev_init(fbdev_name, &w, &h, no_dblbuf);
+  fbdev = vout_fbdev_init(fbdev_name, &w, &h, 16, no_dblbuf);
   if (fbdev == NULL)
     return -1;
 
@@ -173,17 +173,33 @@ void host_video_blit4(const unsigned char *src, int w, int h, int stride)
 
 void host_video_blit8(const unsigned char *src, int w, int h, int stride)
 {
-  extern void rotated_blit8(void *dst, const void *linesx4);
+  if (probably_caanoo) {
+    unsigned char *dst = host_screen;
+    int i;
+    for (i = 0; i < 240; i++, dst += 320, src += stride)
+      memcpy(dst, src, w);
+  }
+  else {
+    extern void rotated_blit8(void *dst, const void *linesx4);
+    rotated_blit8(host_screen, src);
+  }
 
-  rotated_blit8(host_screen, src);
   host_video_flip();
 }
 
 void host_video_blit16(const unsigned short *src, int w, int h, int stride)
 {
-  extern void rotated_blit16(void *dst, const void *linesx4);
+  if (probably_caanoo) {
+    unsigned short *dst = host_screen;
+    int i;
+    for (i = 0; i < 240; i++, dst += 320, src += stride / 2)
+      memcpy(dst, src, w*2);
+  }
+  else {
+    extern void rotated_blit16(void *dst, const void *linesx4);
+    rotated_blit16(host_screen, src);
+  }
 
-  rotated_blit16(host_screen, src);
   host_video_flip();
 }
 #endif // LOADER
