@@ -24,12 +24,11 @@ OBJ += sys_cacheflush.o emu_arm.o
 endif
 ifdef PND
 CFLAGS += -DPND
-OBJ += host_pnd.o
 TAG = _pnd
 endif
 ifdef WIZ
 CFLAGS += -DWIZ
-OBJ += host_wiz.o wiz_video_arm.o
+OBJ += wiz_video_arm.o
 TAG = _wiz
 endif
 
@@ -39,7 +38,7 @@ vpath %.s = ../common/
 TARGET_S = ginge_sloader$(TAG)
 TARGET_D = ginge_dyn$(TAG)
 
-OBJ += emu.o host_fb.o cmn.o
+OBJ += emu.o host.o host_fb.o cmn.o
 OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
 OBJ_D += $(OBJ) dl.o
 

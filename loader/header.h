@@ -50,6 +50,7 @@ int   emu_do_execve(const char *filename, char *const argv[], char *const envp[]
 
 int   host_init(void);
 int   host_read_btns(void);
+void  host_forced_exit(void);
 
 enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,
         GP2X_START = 8,   GP2X_SELECT = 9,    GP2X_L = 10,    GP2X_R = 11,

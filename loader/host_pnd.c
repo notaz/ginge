@@ -1,4 +1,30 @@
 // vim:shiftwidth=2:expandtab
+
+struct in_default_bind in_evdev_defbinds[] = {
+  { KEY_UP,         IN_BINDTYPE_PLAYER12, GP2X_UP },
+  { KEY_PAGEUP,     IN_BINDTYPE_PLAYER12, GP2X_Y },
+  { KEY_END,        IN_BINDTYPE_PLAYER12, GP2X_B },
+  { KEY_PAGEDOWN,   IN_BINDTYPE_PLAYER12, GP2X_X },
+  { KEY_HOME,       IN_BINDTYPE_PLAYER12, GP2X_A },
+  { KEY_RIGHTSHIFT, IN_BINDTYPE_PLAYER12, GP2X_L },
+  { KEY_RIGHTCTRL,  IN_BINDTYPE_PLAYER12, GP2X_R },
+  { KEY_LEFTALT,    IN_BINDTYPE_PLAYER12, GP2X_START },
+  { KEY_LEFTCTRL,   IN_BINDTYPE_PLAYER12, GP2X_SELECT },
+  { KEY_COMMA,      IN_BINDTYPE_PLAYER12, GP2X_VOL_DOWN },
+  { KEY_DOT,        IN_BINDTYPE_PLAYER12, GP2X_VOL_UP },
+  { KEY_1,          IN_BINDTYPE_PLAYER12, GP2X_PUSH },
+  { KEY_Q,          IN_BINDTYPE_EMU, 0 },
+  { 0, 0, 0 },
+};
+
+static void host_actions(int actions[IN_BINDTYPE_COUNT])
+{
+  if (actions[IN_BINDTYPE_EMU] & 1)
+    host_forced_exit();
+}
+
+// todo: rm when generic code works
+#if 0
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
@@ -125,4 +151,4 @@ int host_read_btns(void)
 
   return keystate;
 }
-
+#endif

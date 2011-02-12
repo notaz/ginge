@@ -4,13 +4,35 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <linux/input.h>
 
-#include "header.h"
-#include "../common/warm.h"
-#include "realfuncs.h"
+#include "../common/warm/warm.h"
 
+extern int memdev, probably_caanoo; // leasing from wiz_video
+
+#define BTN_JOY BTN_JOYSTICK
+
+struct in_default_bind in_evdev_defbinds[] = {
+  { KEY_UP,       IN_BINDTYPE_PLAYER12, GP2X_UP },
+  { KEY_DOWN,     IN_BINDTYPE_PLAYER12, GP2X_DOWN },
+  { KEY_LEFT,     IN_BINDTYPE_PLAYER12, GP2X_LEFT },
+  { KEY_RIGHT,    IN_BINDTYPE_PLAYER12, GP2X_RIGHT },
+  { BTN_JOY + 0,  IN_BINDTYPE_PLAYER12, GP2X_A },
+  { BTN_JOY + 1,  IN_BINDTYPE_PLAYER12, GP2X_X },
+  { BTN_JOY + 2,  IN_BINDTYPE_PLAYER12, GP2X_B },
+  { BTN_JOY + 3,  IN_BINDTYPE_PLAYER12, GP2X_Y },
+  { BTN_JOY + 4,  IN_BINDTYPE_PLAYER12, GP2X_L },
+  { BTN_JOY + 5,  IN_BINDTYPE_PLAYER12, GP2X_R },
+  { BTN_JOY + 8,  IN_BINDTYPE_PLAYER12, GP2X_START },
+  { BTN_JOY + 9,  IN_BINDTYPE_PLAYER12, GP2X_SELECT },
+  { BTN_JOY + 10, IN_BINDTYPE_PLAYER12, GP2X_PUSH },
+  { BTN_JOY + 6,  IN_BINDTYPE_EMU, 0 },
+  { 0, 0, 0 }
+};
+
+// todo: rm when generic code works on Wiz
+#if 0
 static int gpiodev = -1;
-extern int memdev; // leasing from wiz_video
 
 int host_init(void)
 {
@@ -37,11 +59,18 @@ int host_read_btns(void)
 
   return value;
 }
+#endif
 
 void *host_mmap_upper(void)
 {
   void *ret;
   int r;
+
+  // make sure this never happens on Caanoo
+  if (probably_caanoo) {
+    err("Wiz mmap code called on Caanoo?");
+    return MAP_FAILED;
+  }
 
   // Wiz                GP2X
   // <linux mem>        03460000-03ffffff  00ba0000
@@ -81,3 +110,21 @@ fail:
   exit(1);
 }
 
+static void host_actions(int actions[IN_BINDTYPE_COUNT])
+{
+  if (probably_caanoo && (actions[IN_BINDTYPE_EMU] & 1)) {
+    // 'home key as Fn' handling
+    int act = actions[IN_BINDTYPE_PLAYER12];
+    if (act & (1 << GP2X_START)) {
+      act &= ~(1 << GP2X_START);
+      act |=   1 << GP2X_VOL_UP;
+    }
+    if (act & (1 << GP2X_SELECT)) {
+      act &= ~(1 << GP2X_SELECT);
+      act |=   1 << GP2X_VOL_DOWN;
+    }
+    if (act & (1 << GP2X_Y))
+      host_forced_exit();
+    actions[IN_BINDTYPE_PLAYER12] = act;
+  }
+}
