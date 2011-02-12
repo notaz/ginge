@@ -1,4 +1,8 @@
 // vim:shiftwidth=2:expandtab
+// a "gentle" reminder
+#ifdef __ARM_EABI__
+#error loader is meant to be OABI!
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -438,7 +442,8 @@ static u32 xread32_io_cmn(u32 a, u32 *handled)
   //  ???? ???? YXBA DURiLe ???? VdVuMS LR?? ????
   // |     GPIOC[31:16]    |    GPIOB[31:16]     |
   case 0xa058: // GPIOBPAD
-    d =   pollux.btn_state & 0x0300;
+    d =  (pollux.btn_state >> 1) & 0x0100;
+    d |= (pollux.btn_state << 1) & 0x0200;
     d |= (pollux.btn_state >> 3) & 0x0080;
     d |= (pollux.btn_state >> 5) & 0x0040;
     d |= (pollux.btn_state >> 6) & 0x0c00;
@@ -924,6 +929,14 @@ void emu_init(void *map_bottom)
   pthread_t tid;
   void *pret;
   int ret;
+
+#ifdef PND
+  if (geteuid() == 0) {
+    fprintf(stderr, "don't try to run as root, device registers or memory "
+                    "might get trashed crashing the OS or even damaging the device.\n");
+    exit(1);
+  }
+#endif
 
   g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
   pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
