@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <alloca.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -1210,24 +1211,27 @@ static const struct {
   const char *from;
   const char *to;
 } path_map[] = {
-  { "/mnt/tmp/", "/tmp/" },
+  { "/mnt/tmp", "./tmp" },
 };
 
 static const char *wrap_path(const char *path)
 {
-  char *buff;
+  char *buff, *p;
   size_t size;
   int i, len;
 
   // do only path mapping for now
   for (i = 0; i < ARRAY_SIZE(path_map); i++) {
-    len = strlen(path_map[i].from);
-    if (strncmp(path, path_map[i].from, len) == 0) {
+    p = strstr(path, path_map[i].from);
+    if (p != NULL) {
       size = strlen(path) + strlen(path_map[i].to) + 1;
       buff = malloc(size);
       if (buff == NULL)
         break;
-      snprintf(buff, size, "%s%s", path_map[i].to, path + len);
+      len = p - path;
+      strncpy(buff, path, len);
+      snprintf(buff + len, size - len, "%s%s", path_map[i].to,
+        path + len + strlen(path_map[i].from));
       dbg("mapped path \"%s\" -> \"%s\"\n", path, buff);
       return buff;
     }
@@ -1258,6 +1262,7 @@ void *emu_do_fopen(const char *path, const char *mode)
 int emu_do_system(const char *command)
 {
   static char tmp_path[512];
+  int need_ginge = 0;
   const char *p2;
   char *p;
   int ret;
@@ -1265,17 +1270,25 @@ int emu_do_system(const char *command)
   if (command == NULL)
     return -1;
 
-  // pass through stuff in PATH
-  p = strchr(command, ' ');
-  p2 = strchr(command, '/');
-  if (p2 == NULL || (p != NULL && p2 > p))
-    return system(command);
+  for (p2 = command; *p2 && isspace(*p2); p2++)
+    ;
 
-  make_local_path(tmp_path, sizeof(tmp_path), "ginge_prep");
-  p = tmp_path + strlen(tmp_path);
+  if (*p2 == '.') // relative path?
+    need_ginge = 1;
+  else if (*p2 == '/' && strncmp(p2, "/bin", 4) && strncmp(p2, "/lib", 4)
+           && strncmp(p2, "/sbin", 4) && strncmp(p2, "/usr", 4))
+    // absolute path, but not a system command
+    need_ginge = 1;
 
   p2 = wrap_path(command);
-  snprintf(p, sizeof(tmp_path) - (p - tmp_path), " --nomenu %s", p2);
+  if (need_ginge) {
+    make_local_path(tmp_path, sizeof(tmp_path), "ginge_prep");
+    p = tmp_path + strlen(tmp_path);
+
+    snprintf(p, sizeof(tmp_path) - (p - tmp_path), " --nomenu %s", p2);
+  }
+  else
+    snprintf(tmp_path, sizeof(tmp_path), "%s", p2);
   wrap_path_free(p2, command);
 
   dbg("system: \"%s\"\n", tmp_path);
