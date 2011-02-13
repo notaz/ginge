@@ -1,8 +1,8 @@
 
 GINGE - Ginge Is Not GP2X Emulator
-release 3
+release 4
 
-(C) notaz, 2010
+(C) notaz, 2010-2011
 http://notaz.gp2x.de/
 
 
@@ -11,8 +11,8 @@ About
 
 Ginge is an application that can run many GP2X F100/F200, Wiz games and
 programs on other ARM Linux platforms, which currently includes Pandora
-and Wiz itself. It is not a full hardware emulator like MAME, PicoDrive or
-similar, it does not emulate the CPU. It can be considered as compatibility
+Caanoo and Wiz itself. It is not a full hardware emulator like MAME, PicoDrive
+or similar, it does not emulate the CPU. It can be considered as compatibility
 layer similar to Wine on PC Linux, however it does emulate small portion of
 MMSP2 and Pollux system-on-chips. It operates by hooking certain system calls
 and using realtime patching of code that accesses memory mapped hardware
@@ -27,13 +27,14 @@ can then be used to start GP2X software, which will either run if it's
 compatible, or just return back to the menu if it is not. In some cases it
 might hang though.
 
-Keys are mapped to corresponding keys on both pandora and Wiz, except:
+Keys are mapped to corresponding keys pandora, Wiz and Caanoo , except:
 
-Key              Pandora   Wiz
-Stick Push       1         unmapped
-Volume up/down   '.', ','  Volume up/down
+Key              Pandora   Wiz              Caanoo
+Stick Push       1         unmapped         Stick Push
+Volume up/down   '.', ','  Volume up/down   Home+I/Home+II
 
 On pandora pressing 'q' will exit the menu or try to kill current application.
+On Cannoo Home+Y tries to kill current application.
 
 
 Structure
@@ -54,6 +55,10 @@ it does is running ginge_prep on GP2X .gpe program, ginge_prep handles the rest.
 
 Changelog
 ---------
+
+r4
++ ginge now runs on Caanoo
+* minor fixes in path handling
 
 r3
 * improved exec handling, mostly for gpecomp.
@@ -91,8 +96,8 @@ modification, is permitted provided that the following conditions are met:
   * The program in any of it's forms is not sold or used as part of any
     commercial package, including pre-installed or included in any kind of
     portable device.
-  * It is not bundled and distributed with any GP2X program without respective
-    program's author's permission.
+  * It is not bundled and distributed with any GP2X or Wiz program without
+    respective program's author's permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED

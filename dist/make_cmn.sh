@@ -3,8 +3,7 @@
 set -e
 
 rm -rf ${out}
-mkdir ${out}
-cp gp2xmenu/gp2xmenu${tag} ${out}/gp2xmenu
+mkdir -p ${out}
 cp -r gp2xmenu/gp2xmenu_data ${out}/
 cp prep/ginge_prep${tag} ${out}/ginge_prep
 cp loader/ginge_dyn${tag} ${out}/ginge_dyn

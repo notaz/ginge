@@ -6,6 +6,7 @@ export out=out_wiz
 export tag=_wiz
 
 dist/make_cmn.sh
+cp gp2xmenu/gp2xmenu${tag} ${out}/gp2xmenu
 mkdir -p ${out}/tools ${out}/lib
 cp dist/ginge.gpe ${out}/
 cp dist/ginge32.png ${out}/ginge.png

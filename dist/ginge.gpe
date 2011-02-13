@@ -7,9 +7,9 @@ unset LD_PRELOAD
 
 # we might write something to /tmp, no need to write to flash
 # FIXME: doesn't seem to work, tmpfs broken in Wiz kernel?
-if ! grep -q '/tmp' /proc/mounts; then
-	mount -t tmpfs none /tmp
-fi
+#if ! grep -q '/tmp' /proc/mounts; then
+#	mount -t tmpfs none /tmp
+#fi
 
 # theoretically GP2X apps can make use of more RAM, because
 # Wiz has 2.6 kernel (larger memory requirements) and larger
@@ -22,7 +22,7 @@ fi
 ./gp2xmenu --view-game
 
 #swapoff swapfile
-umount /tmp
+#umount /tmp
 /sbin/rmmod warm 2> /dev/null
 
 cd /usr/gp2x/
