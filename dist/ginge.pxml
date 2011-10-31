@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <PXML xmlns="http://openpandora.org/namespaces/PXML" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="PXML_schema.xsd">
-<application id="ginge">
-  <title lang="en_US">GINGE</title>
- 
-  <description lang="en_US">GINGE - GINGE Is Not GP2X Emulator</description>
- 
-  <exec command="ginge.sh"/>
- 
+<package id="package.ginge.notaz">
+  <titles>
+    <title lang="en_US">GINGE</title>
+  </titles>
+  <version major="0" minor="0" release="3" build="0"/>
   <author name="notaz" website="http://notaz.gp2x.de/"/>
- 
-  <version major="0" minor="0" release="1" build="0"/>
+</package>
+<application id="ginge.notaz">
+  <titles>
+    <title lang="en_US">GINGE</title>
+  </titles>
+  <title lang="en_US">GINGE</title>
+
+  <descriptions>
+    <description lang="en_US">GINGE - GINGE Is Not GP2X Emulator</description>
+  </descriptions>
+
+  <exec command="ginge.sh"/>
+
+  <icon src="ginge60.png"/>
+
+  <author name="notaz" website="http://notaz.gp2x.de/"/>
+
+  <version major="0" minor="0" release="3" build="0"/>
+
+  <licenses>
+    <license name="other"/>
+  </licenses>
+
   <info name="GINGE readme" type="text/plain" src="readme.txt"/>
- 
+
   <categories>
     <category name="Game">
     <subcategory name="Emulator"/>

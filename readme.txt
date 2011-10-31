@@ -10,7 +10,7 @@ About
 -----
 
 Ginge is an application that can run many GP2X F100/F200, Wiz games and
-programs on other ARM Linux platforms, which currently includes Pandora
+programs on other ARM Linux platforms, which currently includes Pandora,
 Caanoo and Wiz itself. It is not a full hardware emulator like MAME, PicoDrive
 or similar, it does not emulate the CPU. It can be considered as compatibility
 layer similar to Wine on PC Linux, however it does emulate small portion of
@@ -83,7 +83,7 @@ Source is available at http://notaz.gp2x.de/releases/ginge/gp2xmenu.tar.bz2
 Ginge may come with some libraries. Those libraries are unmodified copies
 of ones found in root filesystems in GP2X and Wiz and are included to more
 accurately reproduce environment found on GP2X. Their source code may or may
-not be available, I did not I use it, but whatever I found is mirrored here:
+not be available, I did not use it, but whatever I found is mirrored here:
 http://notaz.gp2x.de/downloads/gp2x/src/410_all/
 
 Remaining portion is released under custom closed source license. It is not
