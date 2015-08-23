@@ -79,6 +79,7 @@ License
 
 gp2xmenu is based on GPH GPL source (http://www.gnu.org/licenses/gpl.html).
 Source is available at http://notaz.gp2x.de/releases/ginge/gp2xmenu.tar.bz2
+It is separate program and not linked to the remaining portion in any way.
 
 Ginge may come with some libraries. Those libraries are unmodified copies
 of ones found in root filesystems in GP2X and Wiz and are included to more
@@ -86,27 +87,5 @@ accurately reproduce environment found on GP2X. Their source code may or may
 not be available, I did not use it, but whatever I found is mirrored here:
 http://notaz.gp2x.de/downloads/gp2x/src/410_all/
 
-Remaining portion is released under custom closed source license. It is not
-derived from gp2xmenu and is completely standalone, the menu is only included
-for user's convenience.
-
-Redistribution and use of program's binaries and helper scripts, with or without
-modification, is permitted provided that the following conditions are met:
-  * This readme is included in unmodified form.
-  * The program in any of it's forms is not sold or used as part of any
-    commercial package, including pre-installed or included in any kind of
-    portable device.
-  * It is not bundled and distributed with any GP2X or Wiz program without
-    respective program's author's permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL COPYRIGHT HOLDER BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
+Remaining portion is released under the MAME license, see COPYING file for
+details.

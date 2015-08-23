@@ -1,4 +1,9 @@
-// vim:shiftwidth=2:expandtab
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,3 +85,4 @@ static void ginge_init(void)
   emu_init((void *)lowest_segment);
 }
 
+// vim:shiftwidth=2:expandtab

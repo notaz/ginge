@@ -1,4 +1,9 @@
-// vim:shiftwidth=2:expandtab
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,3 +182,4 @@ int main(int argc, char *argv[])
   return 1;
 }
 
+// vim:shiftwidth=2:expandtab

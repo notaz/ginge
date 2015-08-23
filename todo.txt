@@ -2,3 +2,5 @@
 - giana
 - odanata - no sound
 - touchscreen
+
+- FBA works on Wiz, not on Caanoo?

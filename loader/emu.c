@@ -1,4 +1,9 @@
-// vim:shiftwidth=2:expandtab
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 // a "gentle" reminder
 #ifdef __ARM_EABI__
 #error loader is meant to be OABI!
@@ -1339,3 +1344,4 @@ int emu_do_execve(const char *filename, char *const argv[], char *const envp[])
   return ret;
 }
 
+// vim:shiftwidth=2:expandtab

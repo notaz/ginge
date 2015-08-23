@@ -1,4 +1,9 @@
-// vim:shiftwidth=2:expandtab
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 #include <string.h>
 #ifdef LOADER
 #include "../loader/realfuncs.h"
@@ -206,3 +211,4 @@ void host_video_blit16(const unsigned short *src, int w, int h, int stride)
 
 #endif // WIZ
 
+// vim:shiftwidth=2:expandtab

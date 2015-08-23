@@ -1,4 +1,9 @@
-// vim:shiftwidth=2:expandtab
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -128,3 +133,5 @@ static void host_actions(int actions[IN_BINDTYPE_COUNT])
     actions[IN_BINDTYPE_PLAYER12] = act;
   }
 }
+
+// vim:shiftwidth=2:expandtab
