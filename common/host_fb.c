@@ -16,7 +16,7 @@ static int host_stride;
 
 #if defined(PND)
 
-#include "linux/fbdev.c"
+#include "libpicofe/linux/fbdev.c"
 
 static struct vout_fbdev *fbdev;
 static unsigned short host_pal[256];

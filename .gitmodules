@@ -1,3 +1,6 @@
 [submodule "common/warm"]
 	path = common/warm
 	url = git://notaz.gp2x.de/~notaz/warm.git
+[submodule "common/libpicofe"]
+	path = common/libpicofe
+	url = git://notaz.gp2x.de/~notaz/libpicofe.git

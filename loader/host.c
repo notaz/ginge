@@ -1,6 +1,6 @@
 // vim:shiftwidth=2:expandtab
 
-#define _GNU_SOURCE // for plat.c
+#define _GNU_SOURCE 1 // for plat.c
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -8,9 +8,9 @@
 #include "realfuncs.h"
 
 #define IN_EVDEV
-#include "../common/common/input.c"
-#include "../common/linux/plat.c"
-#include "../common/linux/in_evdev.c"
+#include "../common/libpicofe/input.c"
+#include "../common/libpicofe/linux/plat.c"
+#include "../common/libpicofe/linux/in_evdev.c"
 
 #ifdef PND
 #include "host_pnd.c"
