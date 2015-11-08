@@ -48,9 +48,15 @@ void host_forced_exit(void)
   // exit() might not be enough because loader and app data is out of sync,
   // and other threads (which are really processes on this old glibc used)
   // might not exit properly.
-  system("killall ginge_sloader");
+  char cmd[64];
+
+  printf("forced exit...\n");
+
+  snprintf(cmd, sizeof(cmd), "killall %s", g_argv[0]);
+  system(cmd);
   usleep(300000);
-  system("killall -9 ginge_sloader");
+  snprintf(cmd, sizeof(cmd), "killall -9 %s", g_argv[0]);
+  system(cmd);
   exit(1);
 }
 
