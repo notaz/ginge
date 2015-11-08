@@ -1,16 +1,19 @@
-// vim:shiftwidth=2:expandtab
-
+/*
+ * GINGE - GINGE Is Not Gp2x Emulator
+ * (C) notaz, 2010-2011,2015
+ *
+ * This work is licensed under the MAME license, see COPYING file for details.
+ */
 #define _GNU_SOURCE 1 // for plat.c
 #include <stdio.h>
 #include <stdarg.h>
+#include <linux/input.h>
+
+#include "../common/libpicofe/input.h"
+#include "../common/libpicofe/linux/in_evdev.h"
 
 #include "header.h"
 #include "realfuncs.h"
-
-#define IN_EVDEV
-#include "../common/libpicofe/input.c"
-#include "../common/libpicofe/linux/plat.c"
-#include "../common/libpicofe/linux/in_evdev.c"
 
 #ifdef PND
 #include "host_pnd.c"
@@ -24,6 +27,7 @@ char **g_argv;
 int host_init(void)
 {
   in_init();
+  host_init_input();
   in_probe();
 
   return 0;
@@ -49,3 +53,5 @@ void host_forced_exit(void)
   system("killall -9 ginge_sloader");
   exit(1);
 }
+
+// vim:shiftwidth=2:expandtab

@@ -17,7 +17,7 @@ extern int memdev, probably_caanoo; // leasing from wiz_video
 
 #define BTN_JOY BTN_JOYSTICK
 
-struct in_default_bind in_evdev_defbinds[] = {
+static struct in_default_bind wiz_evdev_defbinds[] = {
   { KEY_UP,       IN_BINDTYPE_PLAYER12, GP2X_UP },
   { KEY_DOWN,     IN_BINDTYPE_PLAYER12, GP2X_DOWN },
   { KEY_LEFT,     IN_BINDTYPE_PLAYER12, GP2X_LEFT },
@@ -33,6 +33,10 @@ struct in_default_bind in_evdev_defbinds[] = {
   { BTN_JOY + 10, IN_BINDTYPE_PLAYER12, GP2X_PUSH },
   { BTN_JOY + 6,  IN_BINDTYPE_EMU, 0 },
   { 0, 0, 0 }
+};
+
+static const struct in_pdata wiz_evdev_pdata = {
+  .defbinds = wiz_evdev_defbinds,
 };
 
 // todo: rm when generic code works on Wiz
@@ -132,6 +136,11 @@ static void host_actions(int actions[IN_BINDTYPE_COUNT])
       host_forced_exit();
     actions[IN_BINDTYPE_PLAYER12] = act;
   }
+}
+
+static void host_init_input(void)
+{
+  in_evdev_init(&wiz_evdev_pdata);
 }
 
 // vim:shiftwidth=2:expandtab

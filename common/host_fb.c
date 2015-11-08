@@ -37,7 +37,7 @@ int host_video_init(int *stride, int no_dblbuf)
     fbdev_name = "/dev/fb1";
 
   w = h = 0;
-  fbdev = vout_fbdev_init(fbdev_name, &w, &h, 16, no_dblbuf);
+  fbdev = vout_fbdev_init(fbdev_name, &w, &h, 16, no_dblbuf ? 1 : 3);
   if (fbdev == NULL)
     return -1;
 

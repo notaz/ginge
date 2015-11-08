@@ -39,6 +39,9 @@ TARGET_S = ginge_sloader$(TAG)
 TARGET_D = ginge_dyn$(TAG)
 
 OBJ += emu.o host.o host_fb.o cmn.o
+OBJ += ../common/libpicofe/input.o
+OBJ += ../common/libpicofe/linux/plat.o
+OBJ += ../common/libpicofe/linux/in_evdev.o
 OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
 OBJ_D += $(OBJ) dl.o
 
@@ -59,4 +62,4 @@ clean:
 # basic deps
 dl.o patches.o: override.c
 *.o: header.h
-
+host_fb.o: libpicofe/linux/fbdev.c
