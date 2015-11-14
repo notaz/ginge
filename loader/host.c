@@ -15,6 +15,11 @@
 #include "header.h"
 #include "realfuncs.h"
 
+// must be affected by realfuncs.h
+#include "../common/libpicofe/input.c"
+#include "../common/libpicofe/linux/plat.c"
+#include "../common/libpicofe/linux/in_evdev.c"
+
 #ifdef PND
 #include "host_pnd.c"
 #elif defined(WIZ)
