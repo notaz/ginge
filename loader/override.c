@@ -36,7 +36,7 @@ static const struct dev_fd_t takeover_devs[] = {
   { "/dev/fb1",     FAKEDEV_FB1 },
   { "/dev/fb/1",    FAKEDEV_FB1 },
   { "/dev/mmuhack", FAKEDEV_MMUHACK },
-  { "/dev/tty",     -1 }, // XXX hmh..
+  { "/dev/tty",     FAKEDEV_TTY0 },
   { "/dev/tty0",    FAKEDEV_TTY0 },
 #ifdef PND
   { "/dev/input/event*", -1 }, // hide for now, may cause dupe events
