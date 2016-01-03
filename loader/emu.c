@@ -1,6 +1,6 @@
 /*
  * GINGE - GINGE Is Not Gp2x Emulator
- * (C) notaz, 2010-2011
+ * (C) notaz, 2010-2011,2016
  *
  * This work is licensed under the MAME license, see COPYING file for details.
  */
@@ -738,10 +738,14 @@ void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
   u32 *regs = sframe->saved_regs;
   u32 op = op_ctx->op;
   u32 t, shift, ret, addr;
-  int rn, rd;
+  int rn, rd, cond;
 
+  cond = (op & 0xf0000000) >> 28;
   rd = (op & 0x0000f000) >> 12;
   rn = (op & 0x000f0000) >> 16;
+
+  if (cond != 0x0e)
+    goto unhandled; // TODO
 
   if ((op & 0x0f200090) == 0x01000090) { // AM3: LDRH, STRH
     if (!BIT_SET(op, 5)) // !H
@@ -769,10 +773,12 @@ void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
     else
       xwrite16(addr, regs[rd]);
   }
-  else if ((op & 0x0d200000) == 0x05000000) { // AM2: LDR[B], STR[B]
+  else if ((op & 0x0c000000) == 0x04000000) { // load/store word/byte
+    if (BIT_SET(op, 21))
+      goto unhandled;                   // unprivileged
     if (BIT_SET(op, 25)) {              // reg offs
       if (BIT_SET(op, 4))
-        goto unhandled;
+        goto unhandled;                 // nah it's media
 
       t = regs[op & 0x000f];
       shift = (op & 0x0f80) >> 7;
@@ -788,7 +794,12 @@ void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
 
     if (!BIT_SET(op, 23))
       t = -t;
-    addr = regs[rn] + t;
+
+    addr = regs[rn];
+    if (BIT_SET(op, 24))   // pre-indexed
+      addr += t;
+    if (!BIT_SET(op, 24) || BIT_SET(op, 21))
+      regs[rn] += t;       // writeback
 
     if (BIT_SET(op, 20)) { // Load
       if (BIT_SET(op, 22)) // Byte
@@ -817,6 +828,7 @@ void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
 
 unhandled:
   err("unhandled IO op %08x @ %08x\n", op, op_ctx->pc);
+  abort();
 }
 
 static u32 make_offset12(u32 *pc, u32 *target)
