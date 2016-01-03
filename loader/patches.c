@@ -1,6 +1,6 @@
 /*
  * GINGE - GINGE Is Not Gp2x Emulator
- * (C) notaz, 2010-2011
+ * (C) notaz, 2010-2011,2016
  *
  * This work is licensed under the MAME license, see COPYING file for details.
  */
@@ -11,69 +11,122 @@
 
 #include "override.c"
 
-// note: first mask must be always full for search algo
+// note: first mask int must be always full for the search algo
 static const unsigned int sig_mask_all[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
   0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
 
 static const unsigned int sig_open[] = {
-  0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900005
+  0xe59cc000, // ldr ip, [ip]
+  0xe33c0000, // teq ip, #0
+  0x1a000003, // bne 0x1c
+  0xef900005, // svc 0x900005
 };
 #define sig_mask_open sig_mask_all
 
 static const unsigned int sig_mmap[] = {
-  0xe92d000f, 0xe1a0000d, 0xef90005a, 0xe28dd010
+  0xe92d000f, // push {r0, r1, r2, r3}
+  0xe1a0000d, // mov  r0, sp
+  0xef90005a, // svc  0x90005a
+  0xe28dd010, // add  sp, sp, #16
 };
 #define sig_mask_mmap sig_mask_all
 
 static const unsigned int sig_mmap2[] = {
-  0xe52d5004, 0xe59d5008, 0xe52d4004, 0xe59d4008,
-  0xe1b0ca05, 0x1a000006, 0xe1a05625, 0xef9000c0
+  0xe52d5004, // push {r5}
+  0xe59d5008, // ldr  r5, [sp, #8]
+  0xe52d4004, // push {r4}
+  0xe59d4008, // ldr  r4, [sp, #8]
+  0xe1b0ca05, // lsls ip, r5, #20
+  0x1a000006, // bne  0x34
+  0xe1a05625, // lsr  r5, r5, #12
+  0xef9000c0, // svc  0x009000c0
 };
 #define sig_mask_mmap2 sig_mask_all
 
 static const unsigned int sig_read[] = {
-  0xe59fc080, 0xe59cc000, 0xe33c0000, 0x1a000003, 0xef900003
+  0xe59fc080, // ldr ip, [pc, #128]
+  0xe59cc000, // ldr ip, [ip]
+  0xe33c0000, // teq ip, #0
+  0x1a000003, // bne 0x20
+  0xef900003, // svc 0x900003
 };
 #define sig_mask_read sig_mask_all
 
 static const unsigned int sig_ioctl[] = {
-  0xef900036, 0xe3700a01, 0x312fff1e
+  0xef900036, // svc  0x900036
+  0xe3700a01, // cmn  r0, #0x1000
+  0x312fff1e, // bxcc lr
 };
 #define sig_mask_ioctl sig_mask_all
 
+static const unsigned int sig_hw_ioctl[] = {
+  0xef900036, // svc  0x900036
+  0xe3700a01, // cmn  r0, #0x1000
+  0xe1a04000, // mov  r4, r0
+};
+#define sig_mask_hw_ioctl sig_mask_all
+
 static const unsigned int sig_sigaction[] = {
-  0xe59f300c, 0xe3530000, 0x0a000000, 0xea000000, 0xea000000
+  0xe59f300c, //    ldr r3, [pc, #12]
+  0xe3530000, //    cmp r3, #0
+  0x0a000000, //    beq 0f
+  0xea000000, //    b   *
+  0xea000000, // 0: b   *
 };
 static const unsigned int sig_mask_sigaction[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000, 0xff000000
 };
 
 static const unsigned int sig_execve[] = {
-  0xef90000b, 0xe1a04000, 0xe3700a01
+  0xef90000b, // svc 0x90000b
+  0xe1a04000, // mov r4, r0
+  0xe3700a01, // cmn r0, #4096
 };
 #define sig_mask_execve sig_mask_all
 
 static const unsigned int sig_execve2[] = {
-  0xef90000b, 0xe3700a01, 0xe1a04000
+  0xef90000b, // svc 0x90000b
+  0xe3700a01, // cmn r0, #4096
+  0xe1a04000, // mov r4, r0
 };
 #define sig_mask_execve2 sig_mask_all
 
 static const unsigned int sig_chdir[] = {
-  0xef90000c, 0xe3700a01, 0x312fff1e, 0xea0004bb
+  0xef90000c, // svc  0x90000c
+  0xe3700a01, // cmn  r0, #4096
+  0x312fff1e, // bxcc lr
+  0xea0004bb, // b    *
 };
 static const unsigned int sig_mask_chdir[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000
 };
 
-#define PATCH_(f,p) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), w_##f }
-#define PATCH(f) PATCH_(f,f)
+/* additional wrapper for harder case of syscalls within the code stream */
+extern int hw_ioctl(int fd, int request, void *argp);
+asm(
+"hw_ioctl:\n"
+"  stmfd sp!, {r1-r3,r12,lr}\n"
+#ifdef PND // fix PC, not needed on ARM9
+"  ldr  r1, [sp, #5*4]\n"
+"  add  r1, r1, #4\n"
+"  str  r1, [sp, #5*4]\n"
+#endif
+"  bl   w_ioctl\n"
+"  cmn  r0, #0x1000\n"
+"  mov  r4, r0\n"
+"  ldmfd sp!, {r1-r3,r12,lr,pc}\n"
+);
+
+#define PATCH_(f, p, t) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), t, f }
+#define PATCH(f) PATCH_(w_##f, f, 0)
 
 static const struct {
   const unsigned int *sig;
   const unsigned int *sig_mask;
   size_t sig_cnt;
+  unsigned int type;
   void *func;
 } patches[] = {
   PATCH(open),
@@ -81,6 +134,7 @@ static const struct {
   PATCH(mmap2), // mmap2 syscall
   PATCH(read),
   PATCH(ioctl),
+  PATCH_(hw_ioctl, hw_ioctl, 1),
   PATCH(sigaction),
 //  PATCH_(execve, execve2), // hangs
   PATCH(chdir),
@@ -105,16 +159,26 @@ void do_patches(void *ptr, unsigned int size)
         if ((seg[s] ^ sig[s]) & sig_mask[s])
           break;
 
-      if (s == patches[i].sig_cnt)
-        goto found;
+      if (s == patches[i].sig_cnt) {
+        dbg("  patch #%i @ %08x type %d\n", i, (int)seg, patches[i].type);
+        switch (patches[i].type) {
+        case 0:
+          seg[0] = 0xe59ff000; // ldr pc, [pc]
+          seg[1] = 0;
+          seg[2] = (unsigned int)patches[i].func;
+          break;
+        case 1:
+          seg[0] = 0xe92d8000; // stmfd sp!, {pc}
+          seg[1] = 0xe51ff004; // pc, [pc, #-4]
+          seg[2] = (unsigned int)patches[i].func;
+          break;
+        default:
+          err("bad patch type: %u\n", patches[i].type);
+          abort();
+        }
+        seg += patches[i].sig_cnt - 1;
+      }
     }
-    continue;
-
-found:
-    dbg("  patch #%i @ %08x\n", i, (int)seg);
-    seg[0] = 0xe59ff000; // ldr pc, [pc]
-    seg[1] = 0;
-    seg[2] = (unsigned int)patches[i].func;
   }
 
   sys_cacheflush(ptr, (char *)ptr + size);
