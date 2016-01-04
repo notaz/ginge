@@ -731,21 +731,45 @@ static struct op_linkpage *g_linkpage;
 static u32 *g_code_ptr;
 static int g_linkpage_count;
 
+enum opcond {
+  C_EQ, C_NE, C_CS, C_CC, C_MI, C_PL, C_VS, C_VC,
+  C_HI, C_LS, C_GE, C_LT, C_GT, C_LE, C_AL,
+};
+enum cpsr_cond {
+  CPSR_N = (1u << 31),
+  CPSR_Z = (1u << 30),
+  CPSR_C = (1u << 29),
+  CPSR_V = (1u << 28),
+};
+
 #define BIT_SET(v, b) (v & (1 << (b)))
 
 void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
 {
   u32 *regs = sframe->saved_regs;
+  u32 cpsr = sframe->cpsr;
   u32 op = op_ctx->op;
   u32 t, shift, ret, addr;
-  int rn, rd, cond;
+  int i, rn, rd, cond;
 
   cond = (op & 0xf0000000) >> 28;
   rd = (op & 0x0000f000) >> 12;
   rn = (op & 0x000f0000) >> 16;
 
-  if (cond != 0x0e)
-    goto unhandled; // TODO
+  if (cond != 0x0e) {
+    switch (cond) {
+    case C_EQ: if ( (cpsr & CPSR_Z)) break; return;
+    case C_NE: if (!(cpsr & CPSR_Z)) break; return;
+    case C_CS: if ( (cpsr & CPSR_C)) break; return;
+    case C_CC: if (!(cpsr & CPSR_C)) break; return;
+    case C_MI: if ( (cpsr & CPSR_N)) break; return;
+    case C_PL: if (!(cpsr & CPSR_N)) break; return;
+    case C_VS: if ( (cpsr & CPSR_V)) break; return;
+    case C_VC: if (!(cpsr & CPSR_V)) break; return;
+    default:
+      goto unhandled;
+    }
+  }
 
   if ((op & 0x0f200090) == 0x01000090) { // AM3: LDRH, STRH
     if (!BIT_SET(op, 5)) // !H
@@ -828,6 +852,9 @@ void emu_handle_op(struct op_context *op_ctx, struct op_stackframe *sframe)
 
 unhandled:
   err("unhandled IO op %08x @ %08x\n", op, op_ctx->pc);
+  for (i = 0; i < 8-1; i++)
+    err(" r%d=%08x  r%-2d=%08x\n", i, regs[i], i+8, regs[i+8]);
+  err(" r%d=%08x cpsr=%08x\n", i, regs[i], cpsr);
   abort();
 }
 
@@ -893,7 +920,7 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
     // real crash - time to die
     err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
     for (i = 0; i < 8; i++)
-      dbg(" r%d=%08x r%2d=%08x\n", i, regs[i], i+8, regs[i+8]);
+      dbg(" r%d=%08x r%-2d=%08x\n", i, regs[i], i+8, regs[i+8]);
     signal(num, SIG_DFL);
     raise(num);
     return;
