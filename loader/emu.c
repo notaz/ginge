@@ -1081,7 +1081,7 @@ static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int
     err("warning: uppermem @ %08x overflows by %d bytes\n",
         offset, umem + length - umem_end);
 
-  dbg("upper mem @ %08x %d\n", offset, length);
+  dbg("upper mem @ %08x %x = %p\n", offset, length, umem);
   return umem;
 }
 
@@ -1099,6 +1099,19 @@ void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int
   err("bad/ni mmap(?, %d, %x, %x, %d, %08x)\n", length, prot, flags, fd, offset);
   errno = EINVAL;
   return MAP_FAILED;
+}
+
+int emu_do_munmap(void *addr, unsigned int length)
+{
+  u8 *p = addr;
+
+  // don't allow to unmap upper mem
+  if ((u8 *)mmsp2.umem <= p && p < (u8 *)mmsp2.umem + 0x2000000) {
+    dbg("ignoring munmap: %p %x\n", addr, length);
+    return 0;
+  }
+
+  return -EAGAIN;
 }
 
 static void emu_sound_open(int fd)

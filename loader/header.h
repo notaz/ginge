@@ -42,6 +42,7 @@ struct op_context;
 void  emu_init(void *map_bottom);
 void  emu_call_handle_op(struct op_context *op_ctx);
 void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset);
+int   emu_do_munmap(void *addr, unsigned int length);
 int   emu_do_ioctl(int fd, int request, void *argp);
 int   emu_read_gpiodev(void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);

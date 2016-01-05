@@ -13,6 +13,7 @@
 int   real_open(const char *pathname, int flags, ...);
 FILE *real_fopen(const char *path, const char *mode);
 void *real_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+int   real_munmap(void *addr, size_t length);
 int   real_read(int fd, void *buf, size_t count);
 int   real_ioctl(int fd, int request, void *argp);
 int   real_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
@@ -27,6 +28,7 @@ int   real_chdir(const char *path);
 #define open real_open
 #define fopen real_fopen
 #define mmap real_mmap
+#define munmap real_munmap
 #define read real_read
 #define ioctl real_ioctl
 #define sigaction real_sigaction

@@ -33,6 +33,13 @@ static const unsigned int sig_mmap[] = {
 };
 #define sig_mask_mmap sig_mask_all
 
+static const unsigned int sig_munmap[] = {
+  0xef90005b, // svc  0x90005b
+  0xe3700a01, // cmn  r0, #0x1000
+  0x312fff1e, // bxcc lr
+};
+#define sig_mask_munmap sig_mask_all
+
 static const unsigned int sig_mmap2[] = {
   0xe52d5004, // push {r5}
   0xe59d5008, // ldr  r5, [sp, #8]
@@ -132,6 +139,7 @@ static const struct {
   PATCH(open),
   PATCH(mmap),
   PATCH(mmap2), // mmap2 syscall
+  PATCH(munmap),
   PATCH(read),
   PATCH(ioctl),
   PATCH_(hw_ioctl, hw_ioctl, 1),

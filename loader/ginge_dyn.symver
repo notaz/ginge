@@ -4,6 +4,7 @@ global:
 	fopen;
 	mmap;
 	mmap2;
+	munmap;
 	read;
 	ioctl;
 	sigaction;

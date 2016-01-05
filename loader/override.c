@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <termios.h>
+#include <errno.h>
 
 #include "realfuncs.h"
 #include "header.h"
@@ -98,6 +99,18 @@ static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_
   return ret;
 }
 #define w_mmap2 w_mmap
+
+static int w_munmap(void *addr, size_t length)
+{
+  int ret;
+  ret = emu_do_munmap(addr, length);
+  if (ret == -EAGAIN)
+    ret = munmap(addr, length);
+
+  if (((long)&ret & 0xf0000000) == 0xb0000000)
+    strace("munmap(%p, %x) = %d\n", addr, length, ret);
+  return ret;
+}
 
 static ssize_t w_read(int fd, void *buf, size_t count)
 {
@@ -227,6 +240,7 @@ static int w_chdir(const char *path)
 #undef open
 #undef fopen
 #undef mmap
+#undef munmap
 #undef read
 #undef ioctl
 #undef sigaction
@@ -256,6 +270,7 @@ static int w_chdir(const char *path)
 MAKE_WRAP_SYM(open);
 MAKE_WRAP_SYM(fopen);
 MAKE_WRAP_SYM(mmap);
+MAKE_WRAP_SYM(munmap);
 MAKE_WRAP_SYM(read);
 MAKE_WRAP_SYM(ioctl);
 MAKE_WRAP_SYM(sigaction);
@@ -281,6 +296,7 @@ static const struct {
   REAL_FUNC_NP(open),
   REAL_FUNC_NP(fopen),
   REAL_FUNC_NP(mmap),
+  REAL_FUNC_NP(munmap),
   REAL_FUNC_NP(read),
   REAL_FUNC_NP(ioctl),
   REAL_FUNC_NP(sigaction),
@@ -295,6 +311,7 @@ static const struct {
 #define open p_real_open
 #define fopen p_real_fopen
 #define mmap p_real_mmap
+#define munmap p_real_munmap
 #define read p_real_read
 #define ioctl p_real_ioctl
 #define sigaction p_real_sigaction
@@ -329,6 +346,11 @@ FILE *real_fopen(const char *path, const char *mode)
 void *real_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
   return mmap(addr, length, prot, flags, fd, offset);
+}
+
+int real_munmap(void *addr, size_t length)
+{
+  return munmap(addr, length);
 }
 
 int real_read(int fd, void *buf, size_t count)
