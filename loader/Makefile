@@ -6,7 +6,7 @@ CFLAGS += -Wall -ggdb -DLOADER
 LDFLAGS += -ggdb -lpthread -lrt
 ifndef DEBUG
 CFLAGS += -O2 -fno-strict-aliasing
-LDFLAGS += -s -O2
+LDFLAGS += -O2
 endif
 ifdef DBG
 CFLAGS += -DDBG=$(DBG)
