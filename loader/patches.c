@@ -25,6 +25,12 @@ static const unsigned int sig_open[] = {
 };
 #define sig_mask_open sig_mask_all
 
+static const unsigned int sig_open_a1[] = {
+  0xef900005, // svc 0x900005
+  0xe1a0f00e, // mov pc, lr
+};
+#define sig_mask_open_a1 sig_mask_all
+
 static const unsigned int sig_mmap[] = {
   0xe92d000f, // push {r0, r1, r2, r3}
   0xe1a0000d, // mov  r0, sp
@@ -48,7 +54,7 @@ static const unsigned int sig_mmap2[] = {
   0xe1b0ca05, // lsls ip, r5, #20
   0x1a000006, // bne  0x34
   0xe1a05625, // lsr  r5, r5, #12
-  0xef9000c0, // svc  0x009000c0
+  0xef9000c0, // svc  0x9000c0
 };
 #define sig_mask_mmap2 sig_mask_all
 
@@ -60,6 +66,20 @@ static const unsigned int sig_read[] = {
   0xef900003, // svc 0x900003
 };
 #define sig_mask_read sig_mask_all
+
+static const unsigned int sig_read_a1[] = {
+  0xef900003, // svc  0x900003
+  0xe3700a01, // cmn  r0, #0x1000
+  0x312fff1e, // bxcc lr
+};
+#define sig_mask_read_a1 sig_mask_all
+
+static const unsigned int sig_hw_read[] = {
+  0xef900003, // svc  0x900003
+  0xe3700a01, // cmn  r0, #0x1000
+  0xe1a04000, // mov  r4, r0
+};
+#define sig_mask_hw_read sig_mask_all
 
 static const unsigned int sig_ioctl[] = {
   0xef900036, // svc  0x900036
@@ -110,24 +130,33 @@ static const unsigned int sig_mask_chdir[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000
 };
 
-/* additional wrapper for harder case of syscalls within the code stream */
-extern int hw_ioctl(int fd, int request, void *argp);
-asm(
-"hw_ioctl:\n"
-"  stmfd sp!, {r1-r3,r12,lr}\n"
-#ifdef PND // fix PC, not needed on ARM9
-"  ldr  r1, [sp, #5*4]\n"
-"  add  r1, r1, #4\n"
-"  str  r1, [sp, #5*4]\n"
+/* additional wrappers for harder case of syscalls within the code stream */
+#ifdef PND /* fix PC, not needed on ARM9 */
+# define SVC_CMN_R0_MOV_R4_PC_ADJ() \
+"  ldr  r12, [sp, #5*4]\n" \
+"  add  r12, r12, #4\n" \
+"  str  r12, [sp, #5*4]\n"
+#else
+# define SVC_CMN_R0_MOV_R4_PC_ADJ()
 #endif
-"  bl   w_ioctl\n"
-"  cmn  r0, #0x1000\n"
-"  mov  r4, r0\n"
-"  ldmfd sp!, {r1-r3,r12,lr,pc}\n"
+
+#define SVC_CMN_R0_MOV_R4_WRAPPER(name, target) \
+extern int name(); \
+asm( \
+#name ":\n" \
+"  stmfd sp!, {r1-r3,r12,lr}\n" \
+   SVC_CMN_R0_MOV_R4_PC_ADJ() \
+"  bl   " #target "\n" \
+"  cmn  r0, #0x1000\n" \
+"  mov  r4, r0\n" \
+"  ldmfd sp!, {r1-r3,r12,lr,pc}\n" \
 );
 
-#define PATCH_(f, p, t) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), t, f }
-#define PATCH(f) PATCH_(w_##f, f, 0)
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_read, w_read)
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_ioctl, w_ioctl)
+
+#define PATCH_(p, f, t) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), t, f, #p }
+#define PATCH(f) PATCH_(f, w_##f, 0)
 
 static const struct {
   const unsigned int *sig;
@@ -135,17 +164,21 @@ static const struct {
   size_t sig_cnt;
   unsigned int type;
   void *func;
+  const char *name;
 } patches[] = {
-  PATCH(open),
-  PATCH(mmap),
-  PATCH(mmap2), // mmap2 syscall
-  PATCH(munmap),
-  PATCH(read),
-  PATCH(ioctl),
+  PATCH (open),
+  PATCH_(open_a1, w_open, 0),
+  PATCH (mmap),
+  PATCH (mmap2), // mmap2 syscall
+  PATCH (munmap),
+  PATCH (read),
+  PATCH_(read_a1, w_read, 0),
+  PATCH_(hw_read, hw_read, 1),
+  PATCH (ioctl),
   PATCH_(hw_ioctl, hw_ioctl, 1),
-  PATCH(sigaction),
-//  PATCH_(execve, execve2), // hangs
-  PATCH(chdir),
+  PATCH (sigaction),
+//  PATCH_(execve, execve2, 0), // hangs
+  PATCH (chdir),
 };
 
 void do_patches(void *ptr, unsigned int size)
@@ -168,16 +201,16 @@ void do_patches(void *ptr, unsigned int size)
           break;
 
       if (s == patches[i].sig_cnt) {
-        dbg("  patch #%i @ %08x type %d\n", i, (int)seg, patches[i].type);
+        dbg("  patch #%i @ %08x type %d %s\n",
+          i, (int)seg, patches[i].type, patches[i].name);
         switch (patches[i].type) {
         case 0:
-          seg[0] = 0xe59ff000; // ldr pc, [pc]
-          seg[1] = 0;
-          seg[2] = (unsigned int)patches[i].func;
+          seg[0] = 0xe51ff004; // ldr   pc, [pc, #-4]
+          seg[1] = (unsigned int)patches[i].func;
           break;
         case 1:
           seg[0] = 0xe92d8000; // stmfd sp!, {pc}
-          seg[1] = 0xe51ff004; // pc, [pc, #-4]
+          seg[1] = 0xe51ff004; // ldr   pc, [pc, #-4]
           seg[2] = (unsigned int)patches[i].func;
           break;
         default:
