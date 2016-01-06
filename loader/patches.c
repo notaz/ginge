@@ -130,6 +130,17 @@ static const unsigned int sig_mask_chdir[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000
 };
 
+/* special */
+static const unsigned int sig_cache1[] = {
+  0xee073f5e, // mcr 15, 0, r3, cr7, cr14, 2
+};
+#define sig_mask_cache1 sig_mask_all
+
+static const unsigned int sig_cache2[] = {
+  0xee070f17, // mcr 15, 0, r0, cr7, cr7, 0
+};
+#define sig_mask_cache2 sig_mask_all
+
 /* additional wrappers for harder case of syscalls within the code stream */
 #ifdef PND /* fix PC, not needed on ARM9 */
 # define SVC_CMN_R0_MOV_R4_PC_ADJ() \
@@ -179,30 +190,30 @@ static const struct {
   PATCH (sigaction),
 //  PATCH_(execve, execve2, 0), // hangs
   PATCH (chdir),
+  PATCH_(cache1, NULL, 2),
+  PATCH_(cache2, NULL, 2),
 };
 
 void do_patches(void *ptr, unsigned int size)
 {
+  unsigned int *seg = (void *)(((long)ptr + 3) & ~3);
+  unsigned int *seg_end = seg + size / 4;
   int i, s;
 
-  for (i = 0; i < ARRAY_SIZE(patches); i++) {
-    const unsigned int *sig = patches[i].sig;
-    const unsigned int *sig_mask = patches[i].sig_mask;
-    unsigned int *seg = (void *)(((long)ptr + 3) & ~3);
-    unsigned int *seg_end = seg + size / 4;
-    unsigned int sig0 = sig[0];
+  for (; seg < seg_end; seg++) {
+    for (i = 0; i < ARRAY_SIZE(patches); i++) {
+      const unsigned int *sig = patches[i].sig;
+      const unsigned int *sig_mask;
 
-    for (; seg < seg_end; seg++) {
-      if (*seg != sig0)
+      if (*seg != sig[0])
         continue;
 
+      sig_mask = patches[i].sig_mask;
       for (s = 1; s < patches[i].sig_cnt; s++)
         if ((seg[s] ^ sig[s]) & sig_mask[s])
           break;
 
       if (s == patches[i].sig_cnt) {
-        dbg("  patch #%i @ %08x type %d %s\n",
-          i, (int)seg, patches[i].type, patches[i].name);
         switch (patches[i].type) {
         case 0:
           seg[0] = 0xe51ff004; // ldr   pc, [pc, #-4]
@@ -213,11 +224,20 @@ void do_patches(void *ptr, unsigned int size)
           seg[1] = 0xe51ff004; // ldr   pc, [pc, #-4]
           seg[2] = (unsigned int)patches[i].func;
           break;
+        case 2:
+          if (seg < (unsigned int *)ptr + 1 || (seg[-1] >> 28) != 0x0e)
+            // might be data
+            continue;
+          seg[0] = 0xe1a00000; // nop
+          break;
         default:
           err("bad patch type: %u\n", patches[i].type);
           abort();
         }
+        dbg("  patch #%2i @ %08x type %d %s\n",
+          i, (int)seg, patches[i].type, patches[i].name);
         seg += patches[i].sig_cnt - 1;
+        break;
       }
     }
   }
