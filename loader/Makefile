@@ -3,7 +3,7 @@ CROSS_COMPILE ?= arm-linux-
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 CFLAGS += -Wall -ggdb -DLOADER
-LDFLAGS += -ggdb -lpthread -lrt
+LDFLAGS += -ggdb
 ifndef DEBUG
 CFLAGS += -O2 -fno-strict-aliasing
 LDFLAGS += -O2
@@ -20,7 +20,7 @@ ASFLAGS += --32
 endif
 ifeq "$(ARCH)" "arm"
 ASFLAGS += -mfloat-abi=soft
-OBJ += sys_cacheflush.o emu_arm.o
+OBJ += syscalls.o emu_arm.o
 endif
 ifdef PND
 CFLAGS += -DPND
@@ -38,7 +38,7 @@ vpath %.s = ../common/
 TARGET_S = ginge_sloader$(TAG)
 TARGET_D = ginge_dyn$(TAG)
 
-OBJ += emu.o host.o host_fb.o cmn.o
+OBJ += emu.o host.o host_fb.o cmn.o llibc.o
 OBJ_S += $(OBJ) loader.o loader_$(ARCH).o patches.o
 OBJ_D += $(OBJ) dl.o
 

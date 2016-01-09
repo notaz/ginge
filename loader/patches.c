@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 #include "header.h"
-#include "sys_cacheflush.h"
+#include "syscalls.h"
 
 #include "override.c"
 

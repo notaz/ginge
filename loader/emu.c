@@ -21,19 +21,22 @@
 #include <unistd.h>
 #include <signal.h>
 #include <asm/ucontext.h>
-#include <pthread.h>
 #include <errno.h>
 #include <time.h>
+#include <sched.h>
 #include <sys/resource.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <linux/soundcard.h>
 #include <linux/fb.h>
+#include <linux/futex.h>
 
 #include "header.h"
 #include "../common/host_fb.h"
 #include "../common/cmn.h"
-#include "sys_cacheflush.h"
+#include "syscalls.h"
 #include "realfuncs.h"
+#include "llibc.h"
 
 #if (DBG & 2) && !(DBG & 4)
 #define LOG_IO_UNK
@@ -56,7 +59,7 @@
 #endif
 
 #ifdef LOG_SEGV
-#define segvlog printf
+#define segvlog g_printf
 #else
 #define segvlog(...)
 #endif
@@ -70,8 +73,10 @@ typedef unsigned int   u32;
 typedef unsigned short u16;
 typedef unsigned char  u8;
 
-static pthread_mutex_t fb_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t fb_cond = PTHREAD_COND_INITIALIZER;
+#define THREAD_STACK_SIZE 0x200000
+
+static int fb_sync_thread_paused;
+static int fb_sync_thread_futex;
 
 static struct {
   u32 dstctrl;
@@ -147,7 +152,7 @@ static void log_io(const char *pfx, u32 a, u32 d, int size)
   if ((a & ~0xffff) == 0x7f000000)
     reg = regnames[a & 0xffff];
 
-  printf(fmt, pfx, a, d, reg);
+  g_printf(fmt, pfx, a, d, reg);
 }
 #endif
 
@@ -188,9 +193,9 @@ static void blt_tr(void *dst, void *src, u32 trc, int w)
   u32 *r = &blitter.dstctrl; \
   int i; \
   for (i = 0; i < 4*4; i++, r++) { \
-    printf("%08x ", *r); \
+    g_printf("%08x ", *r); \
     if ((i & 3) == 3) \
-      printf("\n"); \
+      g_printf("\n"); \
   } \
 }
 
@@ -281,8 +286,10 @@ static void blitter_do(void)
     }
   }
 
-  if (to_screen)
-    pthread_cond_signal(&fb_cond);
+  if (to_screen) {
+    fb_sync_thread_futex = 1;
+    g_futex_raw(&fb_sync_thread_futex, FUTEX_WAKE, 1, NULL);
+  }
   return;
 
 bad_blit:
@@ -329,65 +336,55 @@ static void mlc_flip(void *src, int bpp, int stride)
   }
 }
 
-#define ts_add_nsec(ts, ns) { \
-  ts.tv_nsec += ns; \
-  if (ts.tv_nsec >= 1000000000) { \
-    ts.tv_sec++; \
-    ts.tv_nsec -= 1000000000; \
-  } \
-}
-
-static int fb_sync_thread_paused;
-
 static void *fb_sync_thread(void *arg)
 {
+  unsigned long sigmask[2] = { ~0ul, ~0ul };
+  struct timespec ts = { 0, 0 };
   int invalid_fb_addr = 1;
   int manual_refresh = 0;
   int frame_counter = 0;
-  struct timespec ts;
-  int ret, wait_ret;
+  int wait_ret;
 
-  //ret = pthread_setschedprio(pthread_self(), -1);
-  //log("pthread_setschedprio %d\n", ret);
+  // this thread can't run any signal handlers since the
+  // app's stack/tls stuff will never be set up here
+  sigmask[0] &= ~(1ul << (SIGSEGV - 1));
+  g_rt_sigprocmask_raw(SIG_SETMASK, sigmask, NULL, sizeof(sigmask));
+
   //ret = setpriority(PRIO_PROCESS, 0, -1);
   //log("setpriority %d\n", ret);
 
-  ret = clock_gettime(CLOCK_REALTIME, &ts);
-  if (ret != 0) {
-    perror(PFX "clock_gettime");
-    exit(1);
-  }
+  // tell the main thread we're done init
+  fb_sync_thread_futex = 0;
+  g_futex_raw(&fb_sync_thread_futex, FUTEX_WAKE, 1, NULL);
 
   while (1) {
     u8 *gp2x_fb, *gp2x_fb_end;
 
-    ret =  pthread_mutex_lock(&fb_mutex);
-    wait_ret = pthread_cond_timedwait(&fb_cond, &fb_mutex, &ts);
-    ret |= pthread_mutex_unlock(&fb_mutex);
+    wait_ret = g_futex_raw(&fb_sync_thread_futex, FUTEX_WAIT, 0, &ts);
 
-    if (ret != 0) {
-      err("fb_thread: mutex error: %d\n", ret);
-      sleep(1);
-      goto check_keys;
-    }
-    if (wait_ret != 0 && wait_ret != ETIMEDOUT) {
-      err("fb_thread: cond error: %d\n", wait_ret);
-      sleep(1);
+    // this is supposed to be done atomically, but to make life
+    // easier ignore it for now, race impact is low anyway
+    fb_sync_thread_futex = 0;
+
+    if (wait_ret != 0 && wait_ret != -EWOULDBLOCK
+        && wait_ret != -ETIMEDOUT)
+    {
+      err("fb_thread: futex error: %d\n", wait_ret);
+      g_sleep(1);
       goto check_keys;
     }
     if (fb_sync_thread_paused) {
-      ts_add_nsec(ts, 100000000);
+      ts.tv_nsec = 100000000;
       goto check_keys;
     }
 
-    if (wait_ret != ETIMEDOUT) {
-      clock_gettime(CLOCK_REALTIME, &ts);
-      ts_add_nsec(ts, 50000000);
+    if (wait_ret == 0) {
+      ts.tv_nsec = 50000000;
       manual_refresh++;
       if (manual_refresh == 2)
         dbg("fb_thread: switch to manual refresh\n");
     } else {
-      ts_add_nsec(ts, 16666667);
+      ts.tv_nsec = 16666667;
       if (manual_refresh > 1)
         dbg("fb_thread: switch to auto refresh\n");
       manual_refresh = 0;
@@ -574,7 +571,7 @@ static u32 xread32(u32 a)
 
     switch (a_) {
     case 0x0a00: // TCOUNT, 1/7372800s
-      clock_gettime(CLOCK_REALTIME, &ts);
+      g_clock_gettime_raw(CLOCK_REALTIME, &ts);
       t64 = (u64)ts.tv_sec * 1000000000 + ts.tv_nsec;
       // t * 7372800.0 / 1000000000 * 0x100000000 ~= t * 31665935
       t64 *= 31665935;
@@ -639,9 +636,11 @@ static void xwrite16(u32 a, u32 d)
         return;
       case 0x2914:
         mmsp2.mlc_stl_adrh = d;
-        if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr)
+        if (mmsp2.mlc_stl_adr != mmsp2.old_mlc_stl_adr) {
           // ask for refresh
-          pthread_cond_signal(&fb_cond);
+          fb_sync_thread_futex = 1;
+          g_futex_raw(&fb_sync_thread_futex, FUTEX_WAKE, 1, NULL);
+        }
         mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
         return;
       case 0x2958:
@@ -682,9 +681,11 @@ static void xwrite32(u32 a, u32 d)
     case 0x4038: // MLCADDRESS0
     case 0x406c: // MLCADDRESS1
       pollux.mlc_stl_adr = d;
-      if (d != mmsp2.old_mlc_stl_adr)
+      if (d != mmsp2.old_mlc_stl_adr) {
         // ask for refresh
-        pthread_cond_signal(&fb_cond);
+        fb_sync_thread_futex = 1;
+        g_futex_raw(&fb_sync_thread_futex, FUTEX_WAKE, 1, NULL);
+      }
       mmsp2.old_mlc_stl_adr = d;
       return;
     case 0x403c: // MLCPALETTE0
@@ -971,7 +972,6 @@ void emu_init(void *map_bottom)
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
-  pthread_t tid;
   void *pret;
   int ret;
 
@@ -1021,12 +1021,22 @@ void emu_init(void *map_bottom)
     exit(1);
   }
 
-  ret = pthread_create(&tid, NULL, fb_sync_thread, NULL);
-  if (ret != 0) {
-    err("failed to create fb_sync_thread: %d\n", ret);
+  pret = mmap(NULL, THREAD_STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC,
+              MAP_PRIVATE|MAP_ANONYMOUS|MAP_GROWSDOWN, -1, 0);
+  if (mmsp2.umem == MAP_FAILED) {
+    perror(PFX "mmap thread stack");
     exit(1);
   }
-  pthread_detach(tid);
+  fb_sync_thread_futex = 1;
+  ret = g_clone(CLONE_VM | CLONE_FS | CLONE_FILES
+                | CLONE_SIGHAND | CLONE_THREAD,
+                (char *)pret + THREAD_STACK_SIZE, 0, 0, 0,
+                fb_sync_thread);
+  if (ret == 0 || ret == -1) {
+    perror(PFX "start fb thread");
+    exit(1);
+  }
+  g_futex_raw(&fb_sync_thread_futex, FUTEX_WAIT, 1, NULL);
 
   // defaults
   mmsp2.mlc_stl_adr = 0x03101000; // fb2 is at 0x03381000

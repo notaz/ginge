@@ -1,9 +1,11 @@
 #ifndef INCLUDE_sQt5fY5eUJn5tKV0IBTDxK0zqQutTqTp
 #define INCLUDE_sQt5fY5eUJn5tKV0IBTDxK0zqQutTqTp 1
 
+#include "llibc.h"
+
 #define PFX "ginge: "
-#define err(f, ...) fprintf(stderr, PFX f, ##__VA_ARGS__)
-#define log(f, ...) fprintf(stdout, PFX f, ##__VA_ARGS__)
+#define err(f, ...) g_fprintf(2, PFX f, ##__VA_ARGS__)
+#define log(f, ...) g_fprintf(1, PFX f, ##__VA_ARGS__)
 #ifdef DBG
 #define dbg log
 #define dbg_c printf
