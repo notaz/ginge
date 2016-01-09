@@ -60,6 +60,8 @@ enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,
         GP2X_A = 12,      GP2X_B = 13,        GP2X_X = 14,    GP2X_Y = 15,
         GP2X_VOL_UP = 16, GP2X_VOL_DOWN = 17, GP2X_PUSH = 18 };
 
+extern char *bin_path;
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 #endif /* INCLUDE_sQt5fY5eUJn5tKV0IBTDxK0zqQutTqTp */

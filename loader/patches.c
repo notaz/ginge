@@ -130,6 +130,13 @@ static const unsigned int sig_mask_chdir[] = {
   0xffffffff, 0xffffffff, 0xffffffff, 0xff000000
 };
 
+static const unsigned int sig_readlink[] = {
+  0xef900055, // svc  0x900055
+  0xe3700a01, // cmn  r0, #0x1000
+  0x312fff1e, // bxcc lr
+};
+#define sig_mask_readlink sig_mask_all
+
 /* special */
 static const unsigned int sig_cache1[] = {
   0xee073f5e, // mcr 15, 0, r3, cr7, cr14, 2
@@ -190,6 +197,7 @@ static const struct {
   PATCH (sigaction),
 //  PATCH_(execve, execve2, 0), // hangs
   PATCH (chdir),
+  PATCH (readlink),
   PATCH_(cache1, NULL, 2),
   PATCH_(cache2, NULL, 2),
 };

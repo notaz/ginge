@@ -268,7 +268,26 @@ static int w_chdir(const char *path)
     ret = 0;
   else
     ret = g_chdir_raw(path);
-  strace("chdir(%s) = %d\n", path, ret);
+
+  strace("chdir(%s) = %ld\n", path, ret);
+  return g_syscall_error(ret);
+}
+
+static ssize_t w_readlink(const char *path, char *buf, size_t bufsiz)
+{
+  long ret;
+
+  if (path != NULL && strncmp(path, "/proc/", 6) == 0
+      && strcmp(strrchr(path, '/'), "/exe") == 0)
+  {
+    ret = snprintf(buf, bufsiz, "%s", bin_path);
+    if (ret > bufsiz)
+      ret = bufsiz;
+  }
+  else
+    ret = g_readlink_raw(path, buf, bufsiz);
+
+  strace("readlink(%s, %s, %zd) = %ld\n", path, buf, bufsiz, ret);
   return g_syscall_error(ret);
 }
 
@@ -290,6 +309,7 @@ static int w_chdir(const char *path)
 #undef execvp
 #undef execve
 #undef chdir
+#undef readlink
 
 #ifdef DL
 
@@ -320,6 +340,7 @@ MAKE_WRAP_SYM_N(execv);
 MAKE_WRAP_SYM_N(execvp);
 MAKE_WRAP_SYM(execve);
 MAKE_WRAP_SYM_N(chdir);
+MAKE_WRAP_SYM_N(readlink);
 typeof(mmap) mmap2 __attribute__((alias("w_mmap")));
 
 #define REAL_FUNC_NP(name) \
@@ -443,6 +464,12 @@ int real_execve(const char *filename, char *const argv[],
 int real_chdir(const char *path)
 {
   long ret = g_chdir_raw(path);
+  return g_syscall_error(ret);
+}
+
+ssize_t real_readlink(const char *path, char *buf, size_t bufsiz)
+{
+  long ret = g_readlink_raw(path, buf, bufsiz);
   return g_syscall_error(ret);
 }
 

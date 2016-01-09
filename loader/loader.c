@@ -8,10 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <elf.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/mman.h>
 
 #include "header.h"
 #include "realfuncs.h"
+
+char *bin_path;
 
 #define CHECK_(val, fail_operator, expect, err_msg) \
   if (val fail_operator expect) { \
@@ -68,6 +73,8 @@ int main(int argc, char *argv[])
   int map_cnt;
   int i, ret, envc, sfp;
   long *stack_frame;
+  struct stat st;
+  char buf[64];
 
   if (argc < 2) {
     fprintf(stderr, "usage: %s <program> [args]\n", argv[0]);
@@ -154,6 +161,19 @@ int main(int argc, char *argv[])
       lowest_segment = map_ptr;
   }
 
+  // build self bin path
+  snprintf(buf, sizeof(buf), "/proc/self/fd/%d", fileno(fi));
+  if (lstat(buf, &st) != 0)
+    FAIL_PERROR("lstat bin_path");
+  bin_path = malloc(st.st_size + 1);
+  CHECK_NE(bin_path, NULL, "bin_path");
+  ret = readlink(buf, bin_path, st.st_size);
+  if (ret < 0)
+    FAIL_PERROR("readlink");
+  bin_path[ret] = 0;
+
+  fclose(fi);
+
   emu_init(lowest_segment);
 
   // generate stack frame: argc, argv[], NULL, env[], NULL
@@ -165,6 +185,9 @@ int main(int argc, char *argv[])
     fprintf(stderr, "stack_frame OOM\n");
     return 1;
   }
+
+  // update the environment
+  setenv("_", bin_path, 1);
 
   sfp = 0;
   stack_frame[sfp++] = argc - 1;

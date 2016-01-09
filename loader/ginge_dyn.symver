@@ -18,6 +18,7 @@ global:
 	execvp;
 	execve;
 	chdir;
+	readlink;
 
 local:
 	*;

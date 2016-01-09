@@ -88,6 +88,7 @@ raw_syscall_easy g_close_raw,          __NR_close
 raw_syscall_easy g_chdir_raw,          __NR_chdir
 raw_syscall_easy g_futex_raw,          __NR_futex
 raw_syscall_easy g_nanosleep_raw,      __NR_nanosleep
+raw_syscall_easy g_readlink_raw,       __NR_readlink
 raw_syscall_easy g_clock_gettime_raw,  __NR_clock_gettime
 raw_syscall_easy g_rt_sigprocmask_raw, __NR_rt_sigprocmask
 raw_syscall_easy g_exit_group_raw,     __NR_exit_group
