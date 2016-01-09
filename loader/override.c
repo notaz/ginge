@@ -1,6 +1,6 @@
 /*
  * GINGE - GINGE Is Not Gp2x Emulator
- * (C) notaz, 2010-2011
+ * (C) notaz, 2010-2011,2016
  *
  * This work is licensed under the MAME license, see COPYING file for details.
  */
@@ -19,10 +19,12 @@
 #include <errno.h>
 
 #include "realfuncs.h"
+#include "syscalls.h"
+#include "llibc.h"
 #include "header.h"
 
 #if (DBG & 1)
-#define strace printf
+#define strace g_printf
 #else
 #define strace(...)
 #endif
@@ -44,9 +46,10 @@ static const struct dev_fd_t takeover_devs[] = {
 #endif
 };
 
-static int w_open(const char *pathname, int flags, mode_t mode)
+static long w_open_raw(const char *pathname, int flags, mode_t mode)
 {
-  int i, ret;
+  long ret;
+  int i;
 
   for (i = 0; i < ARRAY_SIZE(takeover_devs); i++) {
     const char *p, *oname;
@@ -66,7 +69,7 @@ static int w_open(const char *pathname, int flags, mode_t mode)
   }
 
   if (i == ARRAY_SIZE(takeover_devs))
-    ret = open(pathname, flags, mode);
+    ret = g_open_raw(pathname, flags, mode);
 
   if (ret >= 0) {
     for (i = 0; emu_interesting_fds[i].name != NULL; i++) {
@@ -80,62 +83,93 @@ static int w_open(const char *pathname, int flags, mode_t mode)
     }
   }
 
-  strace("open(%s) = %d\n", pathname, ret);
+  strace("open(%s) = %ld\n", pathname, ret);
   return ret;
 }
 
-static void *w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+static int w_open(const char *pathname, int flags, mode_t mode)
 {
-  void *ret;
+  long ret = w_open_raw(pathname, flags, mode);
+  return g_syscall_error(ret);
+}
+
+static long w_mmap_raw(void *addr, size_t length, int prot, int flags,
+  int fd, off_t offset)
+{
+  long ret;
+
   if (FAKEDEV_MEM <= fd && fd < FAKEDEV_FD_BOUNDARY)
     ret = emu_do_mmap(length, prot, flags, fd, offset);
   else
-    ret = mmap(addr, length, prot, flags, fd, offset);
+    ret = g_mmap2_raw(addr, length, prot, flags, fd, offset >> 12);
 
-  // threads are using heap before they mmap their stack
-  // printf needs valid stack for pthread/errno
-  if (((long)&ret & 0xf0000000) == 0xb0000000)
-    strace("mmap(%p, %x, %x, %x, %d, %lx) = %p\n", addr, length, prot, flags, fd, (long)offset, ret);
+  strace("mmap(%p, %x, %x, %x, %d, %lx) = %lx\n",
+         addr, length, prot, flags, fd, (long)offset, ret);
   return ret;
+}
+
+static long w_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+  long ret = w_mmap_raw(addr, length, prot, flags, fd, offset);
+  return g_syscall_error(ret);
 }
 #define w_mmap2 w_mmap
 
-static int w_munmap(void *addr, size_t length)
+static long w_munmap_raw(void *addr, size_t length)
 {
-  int ret;
+  long ret;
+
   ret = emu_do_munmap(addr, length);
   if (ret == -EAGAIN)
-    ret = munmap(addr, length);
+    ret = g_munmap_raw(addr, length);
 
-  if (((long)&ret & 0xf0000000) == 0xb0000000)
-    strace("munmap(%p, %x) = %d\n", addr, length, ret);
+  strace("munmap(%p, %x) = %ld\n", addr, length, ret);
+  return ret;
+}
+
+static int w_munmap(void *addr, size_t length)
+{
+  long ret = w_munmap_raw(addr, length);
+  return g_syscall_error(ret);
+}
+
+long w_read_raw(int fd, void *buf, size_t count)
+{
+  long ret;
+
+  if (fd == FAKEDEV_GPIO)
+    ret = emu_read_gpiodev(buf, count);
+  else
+    ret = g_read_raw(fd, buf, count);
+
+  //strace("read(%d, %p, %ld) = %ld\n", fd, buf, count, ret);
   return ret;
 }
 
 static ssize_t w_read(int fd, void *buf, size_t count)
 {
-  ssize_t ret;
-  if (fd == FAKEDEV_GPIO)
-    ret = emu_read_gpiodev(buf, count);
-  else
-    ret = read(fd, buf, count);
-
-  //strace("read(%d, %p, %d) = %d\n", fd, buf, count, ret);
-  return ret;
+  long ret = w_read_raw(fd, buf, count);
+  return g_syscall_error(ret);
 }
 
-static int w_ioctl(int fd, int request, void *argp)
+long w_ioctl_raw(int fd, int request, void *argp)
 {
-  int ret;
+  long ret;
 
   if ((FAKEDEV_MEM <= fd && fd < FAKEDEV_FD_BOUNDARY) ||
       fd == emu_interesting_fds[IFD_SOUND].fd)
     ret = emu_do_ioctl(fd, request, argp);
   else
-    ret = ioctl(fd, request, argp);
+    ret = g_ioctl_raw(fd, request, argp);
 
-  strace("ioctl(%d, %08x, %p) = %d\n", fd, request, argp, ret);
+  strace("ioctl(%d, %08x, %p) = %ld\n", fd, request, argp, ret);
   return ret;
+}
+
+static int w_ioctl(int fd, int request, void *argp)
+{
+  long ret = w_ioctl_raw(fd, request, argp);
+  return g_syscall_error(ret);
 }
 
 static int w_sigaction(int signum, const void *act, void *oldact)
@@ -228,13 +262,14 @@ static UNUSED int w_execve(const char *filename, char *const argv[],
 
 static int w_chdir(const char *path)
 {
-  int ret;
+  long ret;
+
   if (path != NULL && strstr(path, "/usr/gp2x") != NULL)
     ret = 0;
   else
-    ret = chdir(path);
+    ret = g_chdir_raw(path);
   strace("chdir(%s) = %d\n", path, ret);
-  return ret;
+  return g_syscall_error(ret);
 }
 
 #undef open
@@ -243,6 +278,7 @@ static int w_chdir(const char *path)
 #undef munmap
 #undef read
 #undef ioctl
+#undef close
 #undef sigaction
 #undef tcgetattr
 #undef tcsetattr
@@ -267,12 +303,12 @@ static int w_chdir(const char *path)
   static typeof(sym) *p_real_##sym
 
 // note: update symver too
-MAKE_WRAP_SYM(open);
+MAKE_WRAP_SYM_N(open);
 MAKE_WRAP_SYM(fopen);
-MAKE_WRAP_SYM(mmap);
-MAKE_WRAP_SYM(munmap);
-MAKE_WRAP_SYM(read);
-MAKE_WRAP_SYM(ioctl);
+MAKE_WRAP_SYM_N(mmap);
+MAKE_WRAP_SYM_N(munmap);
+MAKE_WRAP_SYM_N(read);
+MAKE_WRAP_SYM_N(ioctl);
 MAKE_WRAP_SYM(sigaction);
 MAKE_WRAP_SYM(tcgetattr);
 MAKE_WRAP_SYM(tcsetattr);
@@ -283,7 +319,7 @@ MAKE_WRAP_SYM_N(execle);
 MAKE_WRAP_SYM_N(execv);
 MAKE_WRAP_SYM_N(execvp);
 MAKE_WRAP_SYM(execve);
-MAKE_WRAP_SYM(chdir);
+MAKE_WRAP_SYM_N(chdir);
 typeof(mmap) mmap2 __attribute__((alias("w_mmap")));
 
 #define REAL_FUNC_NP(name) \
@@ -293,33 +329,33 @@ static const struct {
   const char *name;
   void **func_ptr;
 } real_funcs_np[] = {
-  REAL_FUNC_NP(open),
+  //REAL_FUNC_NP(open),
   REAL_FUNC_NP(fopen),
-  REAL_FUNC_NP(mmap),
-  REAL_FUNC_NP(munmap),
-  REAL_FUNC_NP(read),
-  REAL_FUNC_NP(ioctl),
+  //REAL_FUNC_NP(mmap),
+  //REAL_FUNC_NP(munmap),
+  //REAL_FUNC_NP(read),
+  //REAL_FUNC_NP(ioctl),
   REAL_FUNC_NP(sigaction),
   REAL_FUNC_NP(tcgetattr),
   REAL_FUNC_NP(tcsetattr),
   REAL_FUNC_NP(system),
   // exec* - skipped
   REAL_FUNC_NP(execve),
-  REAL_FUNC_NP(chdir),
+  //REAL_FUNC_NP(chdir),
 };
 
-#define open p_real_open
+//#define open p_real_open
 #define fopen p_real_fopen
-#define mmap p_real_mmap
-#define munmap p_real_munmap
-#define read p_real_read
-#define ioctl p_real_ioctl
+//#define mmap p_real_mmap
+//#define munmap p_real_munmap
+//#define read p_real_read
+//#define ioctl p_real_ioctl
 #define sigaction p_real_sigaction
 #define tcgetattr p_real_tcgetattr
 #define tcsetattr p_real_tcsetattr
 #define system p_real_system
 #define execve p_real_execve
-#define chdir p_real_chdir
+//#define chdir p_real_chdir
 
 #undef MAKE_WRAP_SYM
 #undef REAL_FUNC_NP
@@ -331,11 +367,13 @@ int real_open(const char *pathname, int flags, ...)
 {
   va_list ap;
   mode_t mode;
+  long ret;
 
   va_start(ap, flags);
   mode = va_arg(ap, mode_t);
   va_end(ap);
-  return open(pathname, flags, mode);
+  ret = g_open_raw(pathname, flags, mode);
+  return g_syscall_error(ret);
 }
 
 FILE *real_fopen(const char *path, const char *mode)
@@ -343,24 +381,34 @@ FILE *real_fopen(const char *path, const char *mode)
   return fopen(path, mode);
 }
 
-void *real_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+void *real_mmap(void *addr, size_t length, int prot, int flags,
+  int fd, off_t offset)
 {
-  return mmap(addr, length, prot, flags, fd, offset);
+  long ret = g_mmap2_raw(addr, length, prot, flags, fd, offset >> 12);
+  return (void *)g_syscall_error(ret);
 }
 
 int real_munmap(void *addr, size_t length)
 {
-  return munmap(addr, length);
+  return g_syscall_error(g_munmap_raw(addr, length));
 }
 
 int real_read(int fd, void *buf, size_t count)
 {
-  return read(fd, buf, count);
+  long ret = g_read_raw(fd, buf, count);
+  return g_syscall_error(ret);
 }
 
-int real_ioctl(int d, int request, void *argp)
+int real_ioctl(int fd, int request, void *argp)
 {
-  return ioctl(d, request, argp);
+  long ret = g_ioctl_raw(fd, request, argp);
+  return g_syscall_error(ret);
+}
+
+int real_close(int fd)
+{
+  long ret = g_close_raw(fd);
+  return g_syscall_error(ret);
 }
 
 int real_sigaction(int signum, const sigaction_t *act, sigaction_t *oldact)
@@ -394,7 +442,25 @@ int real_execve(const char *filename, char *const argv[],
 
 int real_chdir(const char *path)
 {
-  return chdir(path);
+  long ret = g_chdir_raw(path);
+  return g_syscall_error(ret);
+}
+
+void real_sleep(unsigned int seconds)
+{
+  struct timespec ts = { seconds, 0 };
+  g_nanosleep_raw(&ts, NULL);
+}
+
+void real_usleep(unsigned int usec)
+{
+  struct timespec ts = { usec / 1000000, usec % 1000000 };
+  g_nanosleep_raw(&ts, NULL);
+}
+
+void real_exit(int status)
+{
+  g_exit_group_raw(status);
 }
 
 // vim:shiftwidth=2:expandtab

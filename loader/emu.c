@@ -370,7 +370,7 @@ static void *fb_sync_thread(void *arg)
         && wait_ret != -ETIMEDOUT)
     {
       err("fb_thread: futex error: %d\n", wait_ret);
-      g_sleep(1);
+      sleep(1);
       goto check_keys;
     }
     if (fb_sync_thread_paused) {
@@ -977,8 +977,8 @@ void emu_init(void *map_bottom)
 
 #ifdef PND
   if (geteuid() == 0) {
-    fprintf(stderr, "don't try to run as root, device registers or memory "
-                    "might get trashed crashing the OS or even damaging the device.\n");
+    err("don't try to run as root, device registers or memory "
+        "might get trashed crashing the OS or even damaging the device.\n");
     exit(1);
   }
 #endif
@@ -1051,11 +1051,11 @@ void emu_init(void *map_bottom)
   sigaction(SIGSEGV, &segv_action, NULL);
 }
 
-int emu_read_gpiodev(void *buf, int count)
+long emu_read_gpiodev(void *buf, int count)
 {
   if (count <= 0) {
     err("gpiodev read %d?\n", count);
-    return -1;
+    return -EINVAL;
   }
   if (count > 4)
     count = 4;
@@ -1065,25 +1065,24 @@ int emu_read_gpiodev(void *buf, int count)
   return count;
 }
 
-static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
+static long emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
   u8 *umem, *umem_end;
 
   // SoC regs
   if ((offset & ~0x1ffff) == 0xc0000000) {
-    return mmap((void *)0x7f000000, length, PROT_NONE,
+    return g_mmap2_raw((void *)0x7f000000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
   // MMSP2 blitter
   if ((offset & ~0xffff) == 0xe0020000) {
-    return mmap((void *)0x7f100000, length, PROT_NONE,
+    return g_mmap2_raw((void *)0x7f100000, length, PROT_NONE,
       MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
   }
   // upper mem
   if ((offset & 0xfe000000) != 0x02000000) {
     err("unexpected devmem mmap @ %08x\n", offset);
-    errno = EINVAL;
-    return MAP_FAILED;
+    return -EINVAL;
   }
 
   umem = uppermem_lookup(offset, &umem_end);
@@ -1092,10 +1091,11 @@ static void *emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int
         offset, umem + length - umem_end);
 
   dbg("upper mem @ %08x %x = %p\n", offset, length, umem);
-  return umem;
+  return (long)umem;
 }
 
-void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset)
+long emu_do_mmap(unsigned int length, int prot, int flags, int fd,
+  unsigned int offset)
 {
   if (fd == FAKEDEV_MEM)
     return emu_mmap_dev(length, prot, flags, offset);
@@ -1107,11 +1107,10 @@ void *emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int
     return emu_mmap_dev(length, prot, flags, offset + 0x03381000);
 
   err("bad/ni mmap(?, %d, %x, %x, %d, %08x)\n", length, prot, flags, fd, offset);
-  errno = EINVAL;
-  return MAP_FAILED;
+  return -EINVAL;
 }
 
-int emu_do_munmap(void *addr, unsigned int length)
+long emu_do_munmap(void *addr, unsigned int length)
 {
   u8 *p = addr;
 
@@ -1131,15 +1130,13 @@ static void emu_sound_open(int fd)
 
   // set default buffer size to 16 * 1K
   frag = (16<<16) | 10; // 16K
-  ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
-  if (ret != 0) {
-    err("snd ioctl SETFRAGMENT %08x: ", frag);
-    perror(NULL);
-  }
+  ret = g_ioctl_raw(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
+  if (ret != 0)
+    err("snd ioctl SETFRAGMENT %08x: %d\n", frag, ret);
 #endif
 }
 
-static int emu_sound_ioctl(int fd, int request, void *argp)
+static long emu_sound_ioctl(int fd, int request, void *argp)
 {
   int *arg = argp;
 
@@ -1155,7 +1152,9 @@ static int emu_sound_ioctl(int fd, int request, void *argp)
    * Catch this and set to something that works. */
   switch(request) {
     case SNDCTL_DSP_SETFRAGMENT: {
-      int ret, bsize, frag, frag_cnt;
+      int bsize, frag, frag_cnt;
+      long ret;
+
       if (arg == NULL)
         break;
 
@@ -1180,11 +1179,9 @@ static int emu_sound_ioctl(int fd, int request, void *argp)
       }
 
       frag |= frag_cnt << 16;
-      ret = ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
-      if (ret != 0) {
-        err("snd ioctl SETFRAGMENT %08x: ", frag);
-        perror(NULL);
-      }
+      ret = g_ioctl_raw(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
+      if (ret != 0)
+        err("snd ioctl SETFRAGMENT %08x: %ld\n", frag, ret);
       // indicate success even if we fail (because of ALSA mostly),
       // things like MikMod will bail out otherwise.
       return 0;
@@ -1196,10 +1193,10 @@ static int emu_sound_ioctl(int fd, int request, void *argp)
       break;
   }
 
-  return ioctl(fd, request, argp);
+  return g_ioctl_raw(fd, request, argp);
 }
 
-int emu_do_ioctl(int fd, int request, void *argp)
+long emu_do_ioctl(int fd, int request, void *argp)
 {
   if (fd == emu_interesting_fds[IFD_SOUND].fd)
     return emu_sound_ioctl(fd, request, argp);
@@ -1265,8 +1262,7 @@ int emu_do_ioctl(int fd, int request, void *argp)
 
 fail:
   err("bad/ni ioctl(%d, %08x, %p)\n", fd, request, argp);
-  errno = EINVAL;
-  return -1;
+  return -EINVAL;
 }
 
 struct dev_fd_t emu_interesting_fds[] = {

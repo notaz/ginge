@@ -4,6 +4,7 @@ CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 CFLAGS += -Wall -ggdb -DLOADER
 LDFLAGS += -ggdb
+#LDFLAGS += -nodefaultlibs # NYET
 ifndef DEBUG
 CFLAGS += -O2 -fno-strict-aliasing
 LDFLAGS += -O2

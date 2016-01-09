@@ -75,14 +75,19 @@ g_clone:
     stmfd sp!, {r4, r5, r6, lr}
     ldmia r12, {r4, r5, r6}
     swi   \nr
-    stmfd sp!, {r4, r5, r6, pc}
+    ldmfd sp!, {r4, r5, r6, pc}
 .endm
 
 raw_syscall_easy g_open_raw,           __NR_open
 raw_syscall_easy g_read_raw,           __NR_read
 raw_syscall_easy g_write_raw,          __NR_write
+raw_syscall      g_mmap2_raw,          __NR_mmap2
+raw_syscall_easy g_munmap_raw,         __NR_munmap
+raw_syscall_easy g_ioctl_raw,          __NR_ioctl
+raw_syscall_easy g_close_raw,          __NR_close
+raw_syscall_easy g_chdir_raw,          __NR_chdir
 raw_syscall_easy g_futex_raw,          __NR_futex
 raw_syscall_easy g_nanosleep_raw,      __NR_nanosleep
 raw_syscall_easy g_clock_gettime_raw,  __NR_clock_gettime
 raw_syscall_easy g_rt_sigprocmask_raw, __NR_rt_sigprocmask
-
+raw_syscall_easy g_exit_group_raw,     __NR_exit_group

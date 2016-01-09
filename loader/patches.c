@@ -163,8 +163,8 @@ asm( \
 "  ldmfd sp!, {r1-r3,r12,lr,pc}\n" \
 );
 
-SVC_CMN_R0_MOV_R4_WRAPPER(hw_read, w_read)
-SVC_CMN_R0_MOV_R4_WRAPPER(hw_ioctl, w_ioctl)
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_read, w_read_raw)
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_ioctl, w_ioctl_raw)
 
 #define PATCH_(p, f, t) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), t, f, #p }
 #define PATCH(f) PATCH_(f, w_##f, 0)

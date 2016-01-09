@@ -199,10 +199,4 @@ void g_fprintf(int fd, const char *fmt, ...)
   g_write_raw(fd, buf, d - buf);
 }
 
-void g_sleep(unsigned int seconds)
-{
-  struct timespec ts = { seconds, 0 };
-  g_nanosleep_raw(&ts, NULL);
-}
-
 // vim:shiftwidth=2:expandtab
