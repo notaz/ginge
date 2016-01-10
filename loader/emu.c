@@ -643,10 +643,10 @@ static void xwrite16(u32 a, u32 d)
         }
         mmsp2.old_mlc_stl_adr = mmsp2.mlc_stl_adr;
         return;
-      case 0x2958:
+      case 0x2958: // MLC_STL_PALLT_A
         mmsp2.mlc_stl_pallt_a = d & 0x1ff;
         return;
-      case 0x295a:
+      case 0x295a: // MLC_STL_PALLT_D
         mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++] = d;
         mmsp2.mlc_stl_pallt_a &= 0x1ff;
         mmsp2.v.dirty_pal = DIRTY_PAL_MMSP2;
@@ -663,6 +663,14 @@ static void xwrite32(u32 a, u32 d)
   if ((a & 0xfff00000) == 0x7f000000) {
     u32 a_ = a & 0xffff;
     switch (a_) {
+    // GP2X
+    case 0x295a: // MLC_STL_PALLT_D
+      // special unaligned 32bit write, allegro seems to rely on it
+      mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++ & 0x1ff] = d;
+      mmsp2.mlc_stl_pallt_d[mmsp2.mlc_stl_pallt_a++ & 0x1ff] = d >> 16;
+      mmsp2.mlc_stl_pallt_a &= 0x1ff;
+      mmsp2.v.dirty_pal = DIRTY_PAL_MMSP2;
+      return;
     // Wiz
     case 0x4024: // MLCCONTROL0
     case 0x4058: // MLCCONTROL1
