@@ -165,7 +165,7 @@ void g_fprintf(int fd, const char *fmt, ...)
 
     zeropad = *s == '0';
     justify = parse_dec(&s);
-    if (*s == 'l')
+    if (*s == 'l' || *s == 'z')
       s++; // ignore for now
     if (*s == 's') {
       char *ns = va_arg(ap, char *);

@@ -41,6 +41,8 @@ static const struct dev_fd_t takeover_devs[] = {
   { "/dev/mmuhack", FAKEDEV_MMUHACK },
   { "/dev/tty",     FAKEDEV_TTY0 },
   { "/dev/tty0",    FAKEDEV_TTY0 },
+  { "/dev/touchscreen/wm97xx", FAKEDEV_WM97XX },
+  { "/etc/pointercal",         FAKEDEV_WM97XX_P },
 #ifdef PND
   { "/dev/input/event*", -1 }, // hide for now, may cause dupe events
 #endif
@@ -137,12 +139,12 @@ long w_read_raw(int fd, void *buf, size_t count)
 {
   long ret;
 
-  if (fd == FAKEDEV_GPIO)
-    ret = emu_read_gpiodev(buf, count);
+  if (FAKEDEV_MEM <= fd && fd < FAKEDEV_FD_BOUNDARY)
+    ret = emu_do_read(fd, buf, count);
   else
     ret = g_read_raw(fd, buf, count);
 
-  //strace("read(%d, %p, %ld) = %ld\n", fd, buf, count, ret);
+  //strace("read(%d, %p, %zd) = %ld\n", fd, buf, count, ret);
   return ret;
 }
 

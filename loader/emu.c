@@ -1059,20 +1059,6 @@ void emu_init(void *map_bottom)
   sigaction(SIGSEGV, &segv_action, NULL);
 }
 
-long emu_read_gpiodev(void *buf, int count)
-{
-  if (count <= 0) {
-    err("gpiodev read %d?\n", count);
-    return -EINVAL;
-  }
-  if (count > 4)
-    count = 4;
-
-  mmsp2.btn_state = host_read_btns();
-  memcpy(buf, &mmsp2.btn_state, count);
-  return count;
-}
-
 static long emu_mmap_dev(unsigned int length, int prot, int flags, unsigned int offset)
 {
   u8 *umem, *umem_end;
@@ -1271,6 +1257,56 @@ long emu_do_ioctl(int fd, int request, void *argp)
 fail:
   err("bad/ni ioctl(%d, %08x, %p)\n", fd, request, argp);
   return -EINVAL;
+}
+
+long emu_do_read(int fd, void *buf, int count)
+{
+  static const char wm97xx_p[] =
+    "5507 0 -831476 0 -4218 16450692 65536"; // from 4.0 fw
+  int ret, pressed = 0, x, y;
+  struct {
+    u16 pressure, x, y;
+  } wm97xx;
+
+  if (count < 0) {
+    err("read(%d, %d)\n", fd, count);
+    return -EINVAL;
+  }
+
+  switch (fd) {
+  case FAKEDEV_GPIO:
+    mmsp2.btn_state = host_read_btns();
+
+    if (count > 4)
+      count = 4;
+    memcpy(buf, &mmsp2.btn_state, count);
+    break;
+  case FAKEDEV_WM97XX:
+    ret = host_read_ts(&pressed, &x, &y);
+    if (ret == 0 && pressed) {
+      wm97xx.pressure = 1;
+      wm97xx.x =        x * 3750 / 1024 + 200;
+      wm97xx.y = 3750 - y * 3750 / 1024 + 200;
+    }
+    else {
+      wm97xx.pressure = 0;
+      wm97xx.x = wm97xx.y = 200;
+    }
+
+    if (count > sizeof(wm97xx))
+      count = sizeof(wm97xx);
+    memcpy(buf, &wm97xx, count);
+    break;
+  case FAKEDEV_WM97XX_P:
+    if (count < sizeof(wm97xx_p))
+      err("incomplete pointercal read\n");
+    strncpy(buf, wm97xx_p, count);
+    break;
+  default:
+    err("read(%d, %d)\n", fd, count);
+    return -EINVAL;
+  }
+  return count;
 }
 
 struct dev_fd_t emu_interesting_fds[] = {

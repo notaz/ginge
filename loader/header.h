@@ -34,6 +34,8 @@ enum {
   FAKEDEV_FB1,
   FAKEDEV_MMUHACK,
   FAKEDEV_TTY0,
+  FAKEDEV_WM97XX,
+  FAKEDEV_WM97XX_P,
   FAKEDEV_FD_BOUNDARY,
 };
 
@@ -46,13 +48,14 @@ void  emu_call_handle_op(struct op_context *op_ctx);
 long  emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset);
 long  emu_do_munmap(void *addr, unsigned int length);
 long  emu_do_ioctl(int fd, int request, void *argp);
-long  emu_read_gpiodev(void *buf, int count);
+long  emu_do_read(int fd, void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);
 int   emu_do_system(const char *command);
 long  emu_do_execve(const char *filename, char *const argv[], char *const envp[]);
 
 int   host_init(void);
 int   host_read_btns(void);
+int   host_read_ts(int *pressed, int *x1024, int *y1024);
 void  host_forced_exit(int status);
 
 enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,

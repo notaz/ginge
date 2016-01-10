@@ -10,3 +10,5 @@ void  host_video_update_pal32(unsigned int *pal);
 void host_video_blit4(const unsigned char *src, int w, int h, int stride);
 void host_video_blit8(const unsigned char *src, int w, int h, int stride);
 void host_video_blit16(const unsigned short *src, int w, int h, int stride);
+
+void host_video_normalize_ts(int *x1024, int *y1024);

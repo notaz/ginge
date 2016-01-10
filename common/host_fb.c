@@ -17,9 +17,30 @@ static int host_stride;
 #if defined(PND)
 
 #include "libpicofe/linux/fbdev.c"
+#include "omapfb.h"
 
 static struct vout_fbdev *fbdev;
 static unsigned short host_pal[256];
+
+static int get_layer_size(int *x, int *y, int *w, int *h)
+{
+  struct omapfb_plane_info pi;
+  int ret;
+
+  ret = ioctl(vout_fbdev_get_fd(fbdev), OMAPFB_QUERY_PLANE, &pi);
+  if (ret != 0) {
+    perror("OMAPFB_QUERY_PLANE");
+    return -1;
+  }
+
+  *x = pi.pos_x;
+  *y = pi.pos_y;
+  *w = pi.out_width;
+  *h = pi.out_height;
+  printf("layer: %d,%d %dx%d\n", *x, *y, *w, *h);
+
+  return 0;
+}
 
 void *host_video_flip(void)
 {
@@ -120,6 +141,18 @@ void host_video_blit16(const unsigned short *src, int w, int h, int stride)
   host_video_flip();
 }
 
+void host_video_normalize_ts(int *x1024, int *y1024)
+{
+  static int lx, ly, lw = 800, lh = 480, checked;
+
+  if (!checked) {
+    get_layer_size(&lx, &ly, &lw, &lh);
+    checked = 1; // XXX: might change, so may need to recheck
+  }
+  *x1024 = (*x1024 - lx) * 1024 / lw;
+  *y1024 = (*y1024 - ly) * 1024 / lh;
+}
+
 #elif defined(WIZ)
 
 #include "warm/warm.c"
@@ -208,6 +241,12 @@ void host_video_blit16(const unsigned short *src, int w, int h, int stride)
   host_video_flip();
 }
 #endif // LOADER
+
+void host_video_normalize_ts(int *x1024, int *y1024)
+{
+  *x1024 = *x1024 * 1024 / 320;
+  *y1024 = *y1024 * 1024 / 240;
+}
 
 #endif // WIZ
 
