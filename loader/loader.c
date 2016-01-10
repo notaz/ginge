@@ -17,6 +17,7 @@
 #include "realfuncs.h"
 
 char *bin_path;
+char **g_argv;
 
 #define CHECK_(val, fail_operator, expect, err_msg) \
   if (val fail_operator expect) { \
@@ -80,6 +81,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "usage: %s <program> [args]\n", argv[0]);
     return 1;
   }
+
+  g_argv = argv;
 
   fi = fopen("/proc/self/maps", "r");
   CHECK_NE(fi, NULL, "fopen maps");

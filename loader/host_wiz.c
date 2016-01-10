@@ -133,7 +133,7 @@ static void host_actions(int actions[IN_BINDTYPE_COUNT])
       act |=   1 << GP2X_VOL_DOWN;
     }
     if (act & (1 << GP2X_Y))
-      host_forced_exit();
+      host_forced_exit(1);
     actions[IN_BINDTYPE_PLAYER12] = act;
   }
 }

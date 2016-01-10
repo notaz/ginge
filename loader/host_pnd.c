@@ -32,7 +32,7 @@ static const struct in_pdata pandora_evdev_pdata = {
 static void host_actions(int actions[IN_BINDTYPE_COUNT])
 {
   if (actions[IN_BINDTYPE_EMU] & 1)
-    host_forced_exit();
+    host_forced_exit(1);
 }
 
 static void host_init_input(void)

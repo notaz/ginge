@@ -26,9 +26,6 @@
 #include "host_wiz.c"
 #endif
 
-// for plat.c
-char **g_argv;
-
 int host_init(void)
 {
   in_init();
@@ -48,7 +45,7 @@ int host_read_btns(void)
   return actions[IN_BINDTYPE_PLAYER12];
 }
 
-void host_forced_exit(void)
+void host_forced_exit(int status)
 {
   // exit() might not be enough because loader and app data is out of sync,
   // and other threads (which are really processes on this old glibc used)
@@ -62,7 +59,7 @@ void host_forced_exit(void)
   usleep(300000);
   snprintf(cmd, sizeof(cmd), "killall -9 %s", g_argv[0]);
   system(cmd);
-  exit(1);
+  exit(status);
 }
 
 // vim:shiftwidth=2:expandtab

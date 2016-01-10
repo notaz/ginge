@@ -25,6 +25,8 @@ long g_futex_raw(int *uaddr, int op, int val,
                  const struct timespec *timeout);
 long g_nanosleep_raw(const struct timespec *req, struct timespec *rem);
 long g_readlink_raw(const char *pathname, char *buf, size_t bufsiz);
+long g_execve_raw(const char *filename, char * const argv[],
+                  char * const envp[]);
 long g_clock_gettime_raw(int clk_id, const struct timespec *tp);
 long g_rt_sigprocmask_raw(int how, const void *set, void *oldset,
                           size_t sigsetsize);

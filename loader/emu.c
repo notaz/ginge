@@ -1371,17 +1371,19 @@ int emu_do_system(const char *command)
   return ret;
 }
 
-int emu_do_execve(const char *filename, char *const argv[], char *const envp[])
+long emu_do_execve(const char *filename, char * const argv[],
+                   char * const envp[])
 {
   const char **new_argv;
   char *prep_path;
-  int i, ret, argc;
+  int i, argc;
+  long ret;
 
   if (filename == NULL)
     return -1;
 
-  if (strstr(filename, "/gp2xmenu") != NULL)
-    exit(0);
+  if (strstr(filename, "gp2xmenu") != NULL)
+    host_forced_exit(0);
 
   for (i = 0; argv[i] != NULL; i++)
     ;
@@ -1406,7 +1408,7 @@ int emu_do_execve(const char *filename, char *const argv[], char *const envp[])
 
   dbg("execve \"%s\" %s \"%s\"\n", new_argv[0], new_argv[1], new_argv[2]);
   ret = execve(new_argv[0], (char **)new_argv, envp);
-  perror("execve");
+  err("execve(%s): %ld\n", new_argv[0], ret);
   return ret;
 }
 

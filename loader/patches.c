@@ -113,12 +113,12 @@ static const unsigned int sig_execve[] = {
 };
 #define sig_mask_execve sig_mask_all
 
-static const unsigned int sig_execve2[] = {
+static const unsigned int sig_hw_execve[] = {
   0xef90000b, // svc 0x90000b
   0xe3700a01, // cmn r0, #4096
   0xe1a04000, // mov r4, r0
 };
-#define sig_mask_execve2 sig_mask_all
+#define sig_mask_hw_execve sig_mask_all
 
 static const unsigned int sig_chdir[] = {
   0xef90000c, // svc  0x90000c
@@ -172,6 +172,7 @@ asm( \
 
 SVC_CMN_R0_MOV_R4_WRAPPER(hw_read, w_read_raw)
 SVC_CMN_R0_MOV_R4_WRAPPER(hw_ioctl, w_ioctl_raw)
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_execve, w_execve_raw)
 
 #define PATCH_(p, f, t) { sig_##p, sig_mask_##p, ARRAY_SIZE(sig_##p), t, f, #p }
 #define PATCH(f) PATCH_(f, w_##f, 0)
@@ -195,7 +196,7 @@ static const struct {
   PATCH (ioctl),
   PATCH_(hw_ioctl, hw_ioctl, 1),
   PATCH (sigaction),
-//  PATCH_(execve, execve2, 0), // hangs
+  PATCH_(hw_execve, hw_execve, 1),
   PATCH (chdir),
   PATCH (readlink),
   PATCH_(cache1, NULL, 2),

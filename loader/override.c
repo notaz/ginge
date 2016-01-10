@@ -251,13 +251,18 @@ static UNUSED int w_execvp(const char *file, char *const argv[])
   return emu_do_execve(file, argv, environ);
 }
 
-// static note: this can't safely return because of the way it's patched in
-// static note2: can't be used, execve hangs?
-static UNUSED int w_execve(const char *filename, char *const argv[],
-                  char *const envp[])
+long w_execve_raw(const char *filename, char * const argv[],
+                  char * const envp[])
 {
   strace("execve(%s, %p, %p) = ?\n", filename, argv, envp);
   return emu_do_execve(filename, argv, envp);
+}
+
+static UNUSED int w_execve(const char *filename, char * const argv[],
+                           char * const envp[])
+{
+  long ret = w_execve_raw(filename, argv, envp);
+  return g_syscall_error(ret);
 }
 
 static int w_chdir(const char *path)
@@ -338,7 +343,7 @@ MAKE_WRAP_SYM_N(execlp);
 MAKE_WRAP_SYM_N(execle);
 MAKE_WRAP_SYM_N(execv);
 MAKE_WRAP_SYM_N(execvp);
-MAKE_WRAP_SYM(execve);
+MAKE_WRAP_SYM_N(execve);
 MAKE_WRAP_SYM_N(chdir);
 MAKE_WRAP_SYM_N(readlink);
 typeof(mmap) mmap2 __attribute__((alias("w_mmap")));
@@ -361,7 +366,7 @@ static const struct {
   REAL_FUNC_NP(tcsetattr),
   REAL_FUNC_NP(system),
   // exec* - skipped
-  REAL_FUNC_NP(execve),
+  //REAL_FUNC_NP(execve),
   //REAL_FUNC_NP(chdir),
 };
 
@@ -375,7 +380,7 @@ static const struct {
 #define tcgetattr p_real_tcgetattr
 #define tcsetattr p_real_tcsetattr
 #define system p_real_system
-#define execve p_real_execve
+//#define execve p_real_execve
 //#define chdir p_real_chdir
 
 #undef MAKE_WRAP_SYM
@@ -458,7 +463,8 @@ int real_system(const char *command)
 int real_execve(const char *filename, char *const argv[],
                   char *const envp[])
 {
-  return execve(filename, argv, envp);
+  long ret = g_execve_raw(filename, argv, envp);
+  return g_syscall_error(ret);
 }
 
 int real_chdir(const char *path)

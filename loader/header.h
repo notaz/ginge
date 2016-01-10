@@ -49,11 +49,11 @@ long  emu_do_ioctl(int fd, int request, void *argp);
 long  emu_read_gpiodev(void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);
 int   emu_do_system(const char *command);
-int   emu_do_execve(const char *filename, char *const argv[], char *const envp[]);
+long  emu_do_execve(const char *filename, char *const argv[], char *const envp[]);
 
 int   host_init(void);
 int   host_read_btns(void);
-void  host_forced_exit(void);
+void  host_forced_exit(int status);
 
 enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,
         GP2X_START = 8,   GP2X_SELECT = 9,    GP2X_L = 10,    GP2X_R = 11,
@@ -61,6 +61,7 @@ enum  { GP2X_UP = 0,      GP2X_LEFT = 2,      GP2X_DOWN = 4,  GP2X_RIGHT = 6,
         GP2X_VOL_UP = 16, GP2X_VOL_DOWN = 17, GP2X_PUSH = 18 };
 
 extern char *bin_path;
+extern char **g_argv;
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
