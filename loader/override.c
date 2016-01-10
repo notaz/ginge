@@ -282,6 +282,7 @@ static ssize_t w_readlink(const char *path, char *buf, size_t bufsiz)
 {
   long ret;
 
+#ifndef DL
   if (path != NULL && strncmp(path, "/proc/", 6) == 0
       && strcmp(strrchr(path, '/'), "/exe") == 0)
   {
@@ -290,6 +291,7 @@ static ssize_t w_readlink(const char *path, char *buf, size_t bufsiz)
       ret = bufsiz;
   }
   else
+#endif
     ret = g_readlink_raw(path, buf, bufsiz);
 
   strace("readlink(%s, %s, %zd) = %ld\n", path, buf, bufsiz, ret);

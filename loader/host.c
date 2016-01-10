@@ -26,6 +26,8 @@
 #include "host_wiz.c"
 #endif
 
+char **g_argv;
+
 int host_init(void)
 {
   in_init();
@@ -54,11 +56,13 @@ void host_forced_exit(int status)
 
   printf("forced exit...\n");
 
-  snprintf(cmd, sizeof(cmd), "killall %s", g_argv[0]);
-  system(cmd);
-  usleep(300000);
-  snprintf(cmd, sizeof(cmd), "killall -9 %s", g_argv[0]);
-  system(cmd);
+  if (g_argv != NULL) {
+    snprintf(cmd, sizeof(cmd), "killall %s", g_argv[0]);
+    system(cmd);
+    usleep(300000);
+    snprintf(cmd, sizeof(cmd), "killall -9 %s", g_argv[0]);
+    system(cmd);
+  }
   exit(status);
 }
 

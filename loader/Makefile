@@ -47,6 +47,7 @@ all: $(TARGET_S) $(TARGET_D)
 
 $(TARGET_S): LDFLAGS += -Wl,-T script_$(ARCH).lds
 $(TARGET_D): LDFLAGS += -ldl -Wl,--version-script=ginge_dyn.symver
+$(TARGET_D): LDFLAGS += -Wl,--no-undefined
 
 $(TARGET_S): $(OBJ_S)
 	$(CC) -o $@ $^ -static $(LDFLAGS)
