@@ -1,6 +1,16 @@
 @ vim:filetype=armasm
 #include <sys/syscall.h>
 
+@ support ancient toolchains (gcc 2.95.3 has upto 225)
+#ifndef __NR_futex
+#define __NR_futex			(__NR_SYSCALL_BASE+240)
+#endif
+#ifndef __NR_exit_group
+#define __NR_exit_group			(__NR_SYSCALL_BASE+248)
+#endif
+#ifndef __NR_clock_gettime
+#define __NR_clock_gettime		(__NR_SYSCALL_BASE+263)
+#endif
 
 .global sys_cacheflush @ const void *start_addr, const void *end_addr
 sys_cacheflush:

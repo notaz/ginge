@@ -17,10 +17,8 @@ ifeq "$(ARCH)" "ia32"
 ARCH = ia32
 CFLAGS += -m32
 LDFLAGS += -m32
-ASFLAGS += --32
 endif
 ifeq "$(ARCH)" "arm"
-ASFLAGS += -mfloat-abi=soft
 OBJ += syscalls.o emu_arm.o
 endif
 ifdef PND
@@ -54,6 +52,10 @@ $(TARGET_S): $(OBJ_S)
 
 $(TARGET_D): $(OBJ_D)
 	$(CC) -o $@ $^ -shared $(LDFLAGS)
+
+# easier to support old toolchains with this
+%.o: %.s
+	$(CC) -o $@ -c $< $(CFLAGS)
 
 clean:
 	$(RM) $(TARGET_S) $(TARGET_D) $(OBJ_S) $(OBJ_D)
