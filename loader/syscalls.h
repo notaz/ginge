@@ -21,6 +21,7 @@ long g_munmap_raw(void *addr, size_t length);
 long g_ioctl_raw(int fd, unsigned long request, ...);
 long g_close_raw(int fd);
 long g_chdir_raw(const char *path);
+long g_mkdir_raw(const char *pathname, unsigned int mode);
 long g_futex_raw(int *uaddr, int op, int val,
                  const struct timespec *timeout);
 long g_nanosleep_raw(const struct timespec *req, struct timespec *rem);

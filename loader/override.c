@@ -48,7 +48,7 @@ static const struct dev_fd_t takeover_devs[] = {
 #endif
 };
 
-static long w_open_raw(const char *pathname, int flags, mode_t mode)
+long w_open_raw(const char *pathname, int flags, mode_t mode)
 {
   long ret;
   int i;
@@ -70,8 +70,11 @@ static long w_open_raw(const char *pathname, int flags, mode_t mode)
     }
   }
 
-  if (i == ARRAY_SIZE(takeover_devs))
-    ret = g_open_raw(pathname, flags, mode);
+  if (i == ARRAY_SIZE(takeover_devs)) {
+    const char *w_path = emu_wrap_path(pathname);
+    ret = g_open_raw(w_path, flags, mode);
+    emu_wrap_path_free(w_path, pathname);
+  }
 
   if (ret >= 0) {
     for (i = 0; emu_interesting_fds[i].name != NULL; i++) {

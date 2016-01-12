@@ -31,6 +31,13 @@ static const unsigned int sig_open_a1[] = {
 };
 #define sig_mask_open_a1 sig_mask_all
 
+static const unsigned int sig_hw_open[] = {
+  0xef900005, // svc  0x900005
+  0xe3700a01, // cmn  r0, #0x1000
+  0xe1a04000, // mov  r4, r0
+};
+#define sig_mask_hw_open sig_mask_all
+
 static const unsigned int sig_mmap[] = {
   0xe92d000f, // push {r0, r1, r2, r3}
   0xe1a0000d, // mov  r0, sp
@@ -170,6 +177,7 @@ asm( \
 "  ldmfd sp!, {r1-r3,r12,lr,pc}\n" \
 );
 
+SVC_CMN_R0_MOV_R4_WRAPPER(hw_open, w_open_raw)
 SVC_CMN_R0_MOV_R4_WRAPPER(hw_read, w_read_raw)
 SVC_CMN_R0_MOV_R4_WRAPPER(hw_ioctl, w_ioctl_raw)
 SVC_CMN_R0_MOV_R4_WRAPPER(hw_execve, w_execve_raw)
@@ -187,6 +195,7 @@ static const struct {
 } patches[] = {
   PATCH (open),
   PATCH_(open_a1, w_open, 0),
+  PATCH_(hw_open, hw_open, 1),
   PATCH (mmap),
   PATCH (mmap2), // mmap2 syscall
   PATCH (munmap),

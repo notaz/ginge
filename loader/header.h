@@ -52,6 +52,8 @@ long  emu_do_read(int fd, void *buf, int count);
 void *emu_do_fopen(const char *path, const char *mode);
 int   emu_do_system(const char *command);
 long  emu_do_execve(const char *filename, char *const argv[], char *const envp[]);
+const char *emu_wrap_path(const char *path);
+void  emu_wrap_path_free(const char *w_path, const char *old_path);
 
 int   host_init(void);
 int   host_read_btns(void);

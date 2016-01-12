@@ -96,6 +96,7 @@ raw_syscall_easy g_munmap_raw,         __NR_munmap
 raw_syscall_easy g_ioctl_raw,          __NR_ioctl
 raw_syscall_easy g_close_raw,          __NR_close
 raw_syscall_easy g_chdir_raw,          __NR_chdir
+raw_syscall_easy g_mkdir_raw,          __NR_mkdir
 raw_syscall_easy g_futex_raw,          __NR_futex
 raw_syscall_easy g_nanosleep_raw,      __NR_nanosleep
 raw_syscall_easy g_readlink_raw,       __NR_readlink

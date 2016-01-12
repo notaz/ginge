@@ -1319,13 +1319,15 @@ static const struct {
   const char *to;
 } path_map[] = {
   { "/mnt/tmp", "./tmp" },
+  { "/mnt/sd", "./mntsd" },
 };
 
-static const char *wrap_path(const char *path)
+const char *emu_wrap_path(const char *path)
 {
   char *buff, *p;
   size_t size;
   int i, len;
+  long ret;
 
   // do only path mapping for now
   for (i = 0; i < ARRAY_SIZE(path_map); i++) {
@@ -1340,6 +1342,11 @@ static const char *wrap_path(const char *path)
       snprintf(buff + len, size - len, "%s%s", path_map[i].to,
         path + len + strlen(path_map[i].from));
       dbg("mapped path \"%s\" -> \"%s\"\n", path, buff);
+
+      ret = g_mkdir_raw(path_map[i].to, 0666);
+      if (ret != 0 && ret != -EEXIST)
+        err("mkdir(%s): %ld\n", path_map[i].to, ret);
+
       return buff;
     }
   }
@@ -1347,7 +1354,7 @@ static const char *wrap_path(const char *path)
   return path;
 }
 
-static void wrap_path_free(const char *w_path, const char *old_path)
+void emu_wrap_path_free(const char *w_path, const char *old_path)
 {
   if (w_path != old_path)
     free((void *)w_path);
@@ -1358,9 +1365,9 @@ void *emu_do_fopen(const char *path, const char *mode)
   const char *w_path;
   FILE *ret;
 
-  w_path = wrap_path(path);
+  w_path = emu_wrap_path(path);
   ret = fopen(w_path, mode);
-  wrap_path_free(w_path, path);
+  emu_wrap_path_free(w_path, path);
 
   return ret;
 }
@@ -1387,7 +1394,7 @@ int emu_do_system(const char *command)
     // absolute path, but not a system command
     need_ginge = 1;
 
-  p2 = wrap_path(command);
+  p2 = emu_wrap_path(command);
   if (need_ginge) {
     make_local_path(tmp_path, sizeof(tmp_path), "ginge_prep");
     p = tmp_path + strlen(tmp_path);
@@ -1396,7 +1403,7 @@ int emu_do_system(const char *command)
   }
   else
     snprintf(tmp_path, sizeof(tmp_path), "%s", p2);
-  wrap_path_free(p2, command);
+  emu_wrap_path_free(p2, command);
 
   dbg("system: \"%s\"\n", tmp_path);
 
@@ -1436,7 +1443,7 @@ long emu_do_execve(const char *filename, char * const argv[],
   make_local_path(prep_path, 512, "ginge_prep");
   new_argv[0] = prep_path;
   new_argv[1] = "--nomenu";
-  new_argv[2] = wrap_path(filename);
+  new_argv[2] = emu_wrap_path(filename);
 
   if (argv[0] != NULL)
     for (i = 1; argv[i] != NULL; i++)
