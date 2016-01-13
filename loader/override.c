@@ -39,12 +39,13 @@ static const struct dev_fd_t takeover_devs[] = {
   { "/dev/fb1",     FAKEDEV_FB1 },
   { "/dev/fb/1",    FAKEDEV_FB1 },
   { "/dev/mmuhack", FAKEDEV_MMUHACK },
-  { "/dev/tty",     FAKEDEV_TTY0 },
+  { "/dev/tty",     FAKEDEV_TTY },
   { "/dev/tty0",    FAKEDEV_TTY0 },
   { "/dev/touchscreen/wm97xx", FAKEDEV_WM97XX },
   { "/etc/pointercal",         FAKEDEV_WM97XX_P },
+  { "/dev/input/mice", -ENODEV },
 #ifdef PND
-  { "/dev/input/event*", -1 }, // hide for now, may cause dupe events
+  { "/dev/input/event*", -ENODEV }, // hide for now, may cause dupe events
 #endif
 };
 

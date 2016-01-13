@@ -1259,10 +1259,11 @@ fail:
   return -EINVAL;
 }
 
+static const char wm97xx_p[] =
+  "5507 0 -831476 0 -4218 16450692 65536"; // from 4.0 fw
+
 long emu_do_read(int fd, void *buf, int count)
 {
-  static const char wm97xx_p[] =
-    "5507 0 -831476 0 -4218 16450692 65536"; // from 4.0 fw
   int ret, pressed = 0, x, y;
   struct {
     u16 pressure, x, y;
@@ -1284,7 +1285,7 @@ long emu_do_read(int fd, void *buf, int count)
   case FAKEDEV_WM97XX:
     ret = host_read_ts(&pressed, &x, &y);
     if (ret == 0 && pressed) {
-      wm97xx.pressure = 1;
+      wm97xx.pressure = 0x8001; // TODO: check the real thing
       wm97xx.x =        x * 3750 / 1024 + 200;
       wm97xx.y = 3750 - y * 3750 / 1024 + 200;
     }
@@ -1303,7 +1304,7 @@ long emu_do_read(int fd, void *buf, int count)
     strncpy(buf, wm97xx_p, count);
     break;
   default:
-    err("read(%d, %d)\n", fd, count);
+    dbg("read(%d, %d)\n", fd, count);
     return -EINVAL;
   }
   return count;
@@ -1365,9 +1366,23 @@ void *emu_do_fopen(const char *path, const char *mode)
   const char *w_path;
   FILE *ret;
 
-  w_path = emu_wrap_path(path);
-  ret = fopen(w_path, mode);
-  emu_wrap_path_free(w_path, path);
+  if (strcmp(path, "/etc/pointercal") == 0) {
+    // use local pontercal, not host's
+    ret = fopen("pointercal", mode);
+    if (ret == NULL) {
+      ret = fopen("pointercal", "w");
+      if (ret != NULL) {
+        fwrite(wm97xx_p, 1, sizeof(wm97xx_p), ret);
+        fclose(ret);
+      }
+      ret = fopen("pointercal", mode);
+    }
+  }
+  else {
+    w_path = emu_wrap_path(path);
+    ret = fopen(w_path, mode);
+    emu_wrap_path_free(w_path, path);
+  }
 
   return ret;
 }
