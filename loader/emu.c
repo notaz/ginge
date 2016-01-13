@@ -916,13 +916,18 @@ static void init_linkpage(void)
 
 static void segv_sigaction(int num, siginfo_t *info, void *ctx)
 {
+  extern char _init, _end;
   struct ucontext *context = ctx;
   u32 *regs = (u32 *)&context->uc_mcontext.arm_r0;
   u32 *pc = (u32 *)regs[15];
+  u32 self_start, self_end;
   struct op_context *op_ctx;
   int i, lp_size;
 
-  if (((regs[15] ^ (u32)&segv_sigaction) & 0xff000000) == 0 ||         // PC is in our segment or
+  self_start = (u32)&_init & ~0xfff;
+  self_end = (u32)&_end;
+
+  if ((self_start <= regs[15] && regs[15] <= self_end) ||              // PC is in our segment or
       (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0) || // .. in linkpage
       ((long)info->si_addr & 0xffe00000) != 0x7f000000)                // faulting not where expected
   {
