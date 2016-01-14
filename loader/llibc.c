@@ -168,7 +168,9 @@ void g_fprintf(int fd, const char *fmt, ...)
     if (*s == 'l' || *s == 'z')
       s++; // ignore for now
     if (*s == 's') {
-      char *ns = va_arg(ap, char *);
+      const char *ns = va_arg(ap, const char *);
+      if (ns == NULL)
+        ns = "(null)";
       int len = strlen(ns);
       while (justify > len && left > 1) {
         *d++ = ' ';
