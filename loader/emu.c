@@ -78,6 +78,8 @@ typedef unsigned char  u8;
 static int fb_sync_thread_paused;
 static int fb_sync_thread_futex;
 
+static int emu_is_dl;
+
 static struct {
   u32 dstctrl;
   u32 dstaddr;
@@ -727,6 +729,7 @@ struct op_context {
 };
 
 struct op_linkpage {
+  u32 *code_ptr;
   void (*handler)(struct op_context *op_ctx);
   u32 code[0];
 };
@@ -736,8 +739,7 @@ struct op_stackframe {
   u32 cpsr;
 };
 
-static struct op_linkpage *g_linkpage;
-static u32 *g_code_ptr;
+static struct op_linkpage *g_linkpages[2];
 static int g_linkpage_count;
 
 enum opcond {
@@ -889,7 +891,7 @@ static u32 make_jmp(u32 *pc, u32 *target, int bl)
   int jmp_val;
 
   jmp_val = target - pc - 2;
-  if (jmp_val < (int)0xff000000 || jmp_val > 0x00ffffff) {
+  if (jmp_val < (int)0xff800000 || jmp_val > 0x007fffff) {
     err("jump out of range (%p -> %p)\n", pc, target);
     abort();
   }
@@ -897,21 +899,22 @@ static u32 make_jmp(u32 *pc, u32 *target, int bl)
   return 0xea000000 | (bl << 24) | (jmp_val & 0x00ffffff);
 }
 
-static void emit_op(u32 op)
+static void emit_op(struct op_linkpage *linkpage, u32 op)
 {
-  *g_code_ptr++ = op;
+  *linkpage->code_ptr++ = op;
 }
 
-static void emit_op_io(u32 op, u32 *target)
+static void emit_op_io(struct op_linkpage *linkpage,
+  u32 op, u32 *target)
 {
-  op |= make_offset12(g_code_ptr, target);
-  emit_op(op);
+  op |= make_offset12(linkpage->code_ptr, target);
+  emit_op(linkpage, op);
 }
 
-static void init_linkpage(void)
+static void init_linkpage(struct op_linkpage *linkpage)
 {
-  g_linkpage->handler = emu_call_handle_op;
-  g_code_ptr = g_linkpage->code;
+  linkpage->handler = emu_call_handle_op;
+  linkpage->code_ptr = linkpage->code;
 }
 
 static void segv_sigaction(int num, siginfo_t *info, void *ctx)
@@ -921,15 +924,16 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   u32 *regs = (u32 *)&context->uc_mcontext.arm_r0;
   u32 *pc = (u32 *)regs[15];
   u32 self_start, self_end;
+  struct op_linkpage *lp = NULL;
   struct op_context *op_ctx;
-  int i, lp_size;
+  int i, ret, lp_i, lp_size;
 
   self_start = (u32)&_init & ~0xfff;
   self_end = (u32)&_end;
 
-  if ((self_start <= regs[15] && regs[15] <= self_end) ||              // PC is in our segment or
-      (((regs[15] ^ (u32)g_linkpage) & ~(LINKPAGE_ALLOC - 1)) == 0) || // .. in linkpage
-      ((long)info->si_addr & 0xffe00000) != 0x7f000000)                // faulting not where expected
+  if ((self_start <= regs[15] && regs[15] <= self_end) ||           // PC is in our segment or
+     !((regs[15] ^ (u32)g_linkpages[0]) & ~(LINKPAGE_ALLOC - 1)) || // .. in linkpage
+      ((long)info->si_addr & 0xffe00000) != 0x7f000000)             // faulting not where expected
   {
     // real crash - time to die
     err("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
@@ -941,52 +945,74 @@ static void segv_sigaction(int num, siginfo_t *info, void *ctx)
   }
   segvlog("segv %d %p @ %08x\n", info->si_code, info->si_addr, regs[15]);
 
+  // find nearby linkpage
+  for (lp_i = 0; lp_i < ARRAY_SIZE(g_linkpages); lp_i++) {
+    if (g_linkpages[lp_i] == NULL)
+      continue;
+    i = g_linkpages[lp_i]->code_ptr + 2 - pc - 2;
+    if ((int)0xff800000 <= i && i <= 0x007fffff) {
+      lp = g_linkpages[lp_i];
+      break;
+    }
+  }
+
+  if (lp == NULL) {
+    err("fatal: no nearby linkpage for %08x\n", regs[15]);
+    abort();
+  }
+
+  if (emu_is_dl) {
+    ret = mprotect((void *)((long)pc & ~0xfff), 0x1000, PROT_READ|PROT_WRITE|PROT_EXEC);
+    if (ret != 0)
+      perror("warning: mprotect");
+  }
+
   // spit PC and op
-  op_ctx = (void *)g_code_ptr;
+  op_ctx = (void *)lp->code_ptr;
   op_ctx->pc = (u32)pc;
   op_ctx->op = *pc;
-  g_code_ptr = &op_ctx->code[0];
+  lp->code_ptr = &op_ctx->code[0];
 
   // emit jump to code ptr
-  *pc = make_jmp(pc, g_code_ptr, 0);
+  *pc = make_jmp(pc, lp->code_ptr, 0);
 
   // generate code:
-  emit_op   (0xe50d0000 + 0xf00 - 4 * 0);                        // str r0, [sp, #(-0xf00 + r0_offs)]
-  emit_op   (0xe50de000 + 0xf00 - 4 * 14);                       // str lr, [sp, #(-0xf00 + lr_offs)]
-  emit_op   (0xe24f0000 + (g_code_ptr - (u32 *)op_ctx + 2) * 4); // sub r0, pc, #op_ctx
-  emit_op   (0xe1a0e00f);                                        // mov lr, pc
-  emit_op_io(0xe51ff000, (u32 *)&g_linkpage->handler);           // ldr pc, =handle_op
-  emit_op   (0xe51de000 + 0xf00 - 4 * 14);                       // ldr lr, [sp, #(-0xf00 + lr_offs)]
-  emit_op   (make_jmp(g_code_ptr, pc + 1, 0));                   // jmp <back>
+  emit_op   (lp, 0xe50d0000 + 0xf00 - 4 * 0);                        // str r0, [sp, #(-0xf00 + r0_offs)]
+  emit_op   (lp, 0xe50de000 + 0xf00 - 4 * 14);                       // str lr, [sp, #(-0xf00 + lr_offs)]
+  emit_op   (lp, 0xe24f0000 + (lp->code_ptr - (u32 *)op_ctx + 2) * 4); // sub r0, pc, #op_ctx
+  emit_op   (lp, 0xe1a0e00f);                                        // mov lr, pc
+  emit_op_io(lp, 0xe51ff000, (u32 *)&lp->handler);                   // ldr pc, =handle_op
+  emit_op   (lp, 0xe51de000 + 0xf00 - 4 * 14);                       // ldr lr, [sp, #(-0xf00 + lr_offs)]
+  emit_op   (lp, make_jmp(lp->code_ptr, pc + 1, 0));                 // jmp <back>
 
   // sync caches
   sys_cacheflush(pc, pc + 1);
-  sys_cacheflush(g_linkpage, g_code_ptr);
+  sys_cacheflush(lp, lp->code_ptr);
 
-  lp_size = (char *)g_code_ptr - (char *)g_linkpage;
+  lp_size = (char *)lp->code_ptr - (char *)lp;
   segvlog("code #%d %d/%d\n", g_linkpage_count, lp_size, LINKPAGE_SIZE);
 
-  if (lp_size + 13*4 > LINKPAGE_SIZE) {
+  if (lp_size + 14*4 > LINKPAGE_SIZE) {
     g_linkpage_count++;
     if (g_linkpage_count >= LINKPAGE_COUNT) {
       err("too many linkpages needed\n");
       abort();
     }
-    g_linkpage = (void *)((char *)g_linkpage + LINKPAGE_SIZE);
-    init_linkpage();
+    g_linkpages[lp_i] = (void *)((char *)g_linkpages[lp_i] + LINKPAGE_SIZE);
+    init_linkpage(g_linkpages[lp_i]);
   }
   //handle_op(regs[15], op, regs, (u32)info->si_addr);
   //regs[15] += 4;
 }
 
-void emu_init(void *map_bottom)
+void emu_init(void *map_bottom[2], int is_dl)
 {
   sigaction_t segv_action = {
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
   void *pret;
-  int ret;
+  int i, ret;
 
 #ifdef PND
   if (geteuid() == 0) {
@@ -996,15 +1022,22 @@ void emu_init(void *map_bottom)
   }
 #endif
 
-  g_linkpage = (void *)(((u32)map_bottom - LINKPAGE_ALLOC) & ~0xfff);
-  pret = mmap(g_linkpage, LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
-              MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0);
-  if (pret != g_linkpage) {
-    perror(PFX "mmap linkpage");
-    exit(1);
+  emu_is_dl = is_dl;
+
+  for (i = 0; i < 2; i++) {
+    if (map_bottom[i] == NULL)
+      continue;
+    g_linkpages[i] = (void *)(((u32)map_bottom[i] - LINKPAGE_ALLOC) & ~0xfff);
+    pret = mmap(g_linkpages[i], LINKPAGE_ALLOC, PROT_READ|PROT_WRITE,
+                MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0);
+    if (pret != g_linkpages[i]) {
+      err("linkpage alloc @ %p: ", g_linkpages[i]);
+      perror(NULL);
+      exit(1);
+    }
+    log("linkpages @ %p\n", g_linkpages[i]);
+    init_linkpage(g_linkpages[i]);
   }
-  log("linkpages @ %p\n", g_linkpage);
-  init_linkpage();
 
   // host stuff
   ret = host_init();

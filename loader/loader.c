@@ -66,7 +66,7 @@ extern char **environ;
 
 int main(int argc, char *argv[])
 {
-  void *lowest_segment = (void *)-1;
+  void *lowest_segments[2] = { NULL, NULL };
   Elf32_Ehdr hdr;
   Elf32_Phdr *phdr;
   FILE *fi;
@@ -160,8 +160,8 @@ int main(int argc, char *argv[])
         do_patches((char *)ptr + align, phdr[i].p_filesz);
     }
 
-    if (map_ptr < lowest_segment)
-      lowest_segment = map_ptr;
+    if (lowest_segments[0] == NULL || map_ptr < lowest_segments[0])
+      lowest_segments[0] = map_ptr;
   }
 
   // build self bin path
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
 
   fclose(fi);
 
-  emu_init(lowest_segment);
+  emu_init(lowest_segments, 0);
 
   // generate stack frame: argc, argv[], NULL, env[], NULL
   for (envc = 0; environ[envc] != NULL; envc++)

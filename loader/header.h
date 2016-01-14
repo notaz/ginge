@@ -44,7 +44,7 @@ void do_patches(void *ptr, unsigned int size);
 
 struct op_context;
 
-void  emu_init(void *map_bottom);
+void  emu_init(void *map_bottom[2], int is_dl);
 void  emu_call_handle_op(struct op_context *op_ctx);
 long  emu_do_mmap(unsigned int length, int prot, int flags, int fd, unsigned int offset);
 long  emu_do_munmap(void *addr, unsigned int length);

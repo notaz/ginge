@@ -25,7 +25,7 @@ static void next_line(FILE *f)
 __attribute__((constructor))
 static void ginge_init(void)
 {
-  unsigned int lowest_segment = (unsigned int)-1;
+  void *lowest_segments[2] = { NULL, NULL };
   unsigned int start, end;
   int i, ret;
   FILE *f;
@@ -50,13 +50,7 @@ static void ginge_init(void)
     perror("parse maps");
     exit(1);
   }
-  lowest_segment = start;
-
-  // assume first entry lists program's text section.
-  // unprotect it in case we need some patching.
-  ret = mprotect((void *)start, end - start, PROT_READ|PROT_WRITE|PROT_EXEC);
-  if (ret != 0)
-    perror("warning: mprotect");
+  lowest_segments[0] = (void *)start;
 
   while (1) {
     next_line(f);
@@ -65,8 +59,15 @@ static void ginge_init(void)
     if (ret <= 0)
       break;
 
-    if (start < lowest_segment)
-      lowest_segment = start;
+    if (lowest_segments[0] == NULL || (void *)start < lowest_segments[0])
+      lowest_segments[0] = (void *)start;
+    else if (lowest_segments[1] == NULL
+             && (char *)start - (char *)lowest_segments[0] > 0x800000)
+    {
+      // an offset is needed because ld-linux also
+      // tends to put stuff here
+      lowest_segments[1] = (void *)(start - 0x20000);
+    }
   }
 
 #if 0
@@ -82,7 +83,7 @@ static void ginge_init(void)
   unsetenv("LD_PRELOAD");
   unsetenv("LD_LIBRARY_PATH");
 
-  emu_init((void *)lowest_segment);
+  emu_init(lowest_segments, 1);
 }
 
 // vim:shiftwidth=2:expandtab
