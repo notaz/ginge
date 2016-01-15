@@ -430,11 +430,17 @@ static void fb_thread_resume(void)
 
 static u32 xread32_io_cmn(u32 a, u32 *handled)
 {
+  struct timespec ts;
   u32 d = 0;
 
   *handled = 1;
   switch (a) {
   // Wiz stuff
+  case 0x1980: // TIMER3 TMRCOUNT
+    // assume the timer is set up for microsec time
+    g_clock_gettime_raw(CLOCK_REALTIME, &ts);
+    d = ts.tv_sec * 1000000 + ((u64)(u32)ts.tv_nsec * 4294968 >> 32);
+    break;
   case 0x402c: // MLCVSTRIDE0
   case 0x4060: // MLCVSTRIDE1
     d = pollux.v.stride;
