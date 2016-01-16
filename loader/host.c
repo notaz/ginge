@@ -138,6 +138,9 @@ void host_forced_exit(int status)
   printf("forced exit...\n");
 
   if (g_argv != NULL) {
+    unsetenv("LD_PRELOAD");
+    unsetenv("LD_LIBRARY_PATH");
+
     snprintf(cmd, sizeof(cmd), "killall %s", g_argv[0]);
     system(cmd);
     usleep(300000);
