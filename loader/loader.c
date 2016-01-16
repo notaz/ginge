@@ -15,6 +15,7 @@
 
 #include "header.h"
 #include "realfuncs.h"
+#include "syscalls.h"
 
 char *bin_path;
 char **g_argv;
@@ -76,6 +77,7 @@ int main(int argc, char *argv[])
   long *stack_frame;
   struct stat st;
   char buf[64];
+  long lret;
 
   if (argc < 2) {
     fprintf(stderr, "usage: %s <program> [args]\n", argv[0]);
@@ -83,6 +85,12 @@ int main(int argc, char *argv[])
   }
 
   g_argv = argv;
+
+  lret = g_personality(-1);
+  if (g_syscall_error(lret) != -1) {
+    lret |= 0x0240000; // ADDR_COMPAT_LAYOUT | ADDR_NO_RANDOMIZE
+    g_personality(lret);
+  }
 
   fi = fopen("/proc/self/maps", "r");
   CHECK_NE(fi, NULL, "fopen maps");

@@ -31,6 +31,7 @@ long g_execve_raw(const char *filename, char * const argv[],
 long g_clock_gettime_raw(int clk_id, const struct timespec *tp);
 long g_rt_sigprocmask_raw(int how, const void *set, void *oldset,
                           size_t sigsetsize);
+long g_personality(long persona);
 long __attribute__((noreturn))
      g_exit_group_raw(int status);
 

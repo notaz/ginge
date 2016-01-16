@@ -103,4 +103,5 @@ raw_syscall_easy g_readlink_raw,       __NR_readlink
 raw_syscall_easy g_execve_raw,         __NR_execve
 raw_syscall_easy g_clock_gettime_raw,  __NR_clock_gettime
 raw_syscall_easy g_rt_sigprocmask_raw, __NR_rt_sigprocmask
+raw_syscall_easy g_personality,        __NR_personality
 raw_syscall_easy g_exit_group_raw,     __NR_exit_group
