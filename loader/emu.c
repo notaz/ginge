@@ -79,6 +79,7 @@ static int fb_sync_thread_paused;
 static int fb_sync_thread_futex;
 
 static int emu_is_dl;
+static int emu_force_snd_frag;
 
 static struct {
   u32 dstctrl;
@@ -1017,6 +1018,7 @@ void emu_init(void *map_bottom[2], int is_dl)
     .sa_sigaction = segv_sigaction,
     .sa_flags = SA_SIGINFO,
   };
+  const char *var;
   void *pret;
   int i, ret;
 
@@ -1029,6 +1031,14 @@ void emu_init(void *map_bottom[2], int is_dl)
 #endif
 
   emu_is_dl = is_dl;
+
+#ifdef PND
+  // set default buffer size to 8 * 1K
+  emu_force_snd_frag = (8<<16) | 10;
+#endif
+  var = getenv("GINGE_SETFRAGMENT");
+  if (var != NULL)
+    emu_force_snd_frag = strtol(var, NULL, 0);
 
   for (i = 0; i < 2; i++) {
     if (map_bottom[i] == NULL)
@@ -1163,15 +1173,13 @@ long emu_do_munmap(void *addr, unsigned int length)
 
 static void emu_sound_open(int fd)
 {
-#ifdef PND
-  int ret, frag;
+  int ret;
 
-  // set default buffer size to 16 * 1K
-  frag = (16<<16) | 10; // 16K
-  ret = g_ioctl_raw(fd, SNDCTL_DSP_SETFRAGMENT, &frag);
-  if (ret != 0)
-    err("snd ioctl SETFRAGMENT %08x: %d\n", frag, ret);
-#endif
+  if (emu_force_snd_frag != 0) {
+    ret = g_ioctl_raw(fd, SNDCTL_DSP_SETFRAGMENT, &emu_force_snd_frag);
+    if (ret != 0)
+      err("snd ioctl SETFRAGMENT %08x: %d\n", emu_force_snd_frag, ret);
+  }
 }
 
 static long emu_sound_ioctl(int fd, int request, void *argp)
@@ -1199,7 +1207,7 @@ static long emu_sound_ioctl(int fd, int request, void *argp)
       frag = *arg & 0xffff;
       frag_cnt = *arg >> 16;
       bsize = frag_cnt << frag;
-      if (frag < 10 || bsize < 4096*4 || bsize > 4096*4*2) {
+      if (frag < 8 || bsize < 4096*4 || bsize > 4096*4*2) {
         /*
          * ~4ms. gpSP wants small buffers or else it stutters
          * because of it's audio thread sync stuff
@@ -1213,7 +1221,7 @@ static long emu_sound_ioctl(int fd, int request, void *argp)
         for (frag = 0; bsize; bsize >>= 1, frag++)
           ;
 
-        frag_cnt = 16;
+        frag_cnt = 8;
       }
 
       frag |= frag_cnt << 16;
