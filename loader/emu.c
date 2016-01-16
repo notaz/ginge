@@ -1291,6 +1291,7 @@ long emu_do_ioctl(int fd, int request, void *argp)
     }
 
   /* *********************** */
+  case FAKEDEV_TTY:
   case FAKEDEV_TTY0:
     // fake tty0 to make GPH SDL happy
     if (request == 0x4b46) // KDGKBENT
